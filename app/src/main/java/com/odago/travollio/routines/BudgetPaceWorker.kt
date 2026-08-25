@@ -58,7 +58,7 @@ class BudgetPaceWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
             when {
                 daysLeft < 0 -> message = "Document alert: your ${d.kind} expired ${-daysLeft} days ago."
                 daysLeft <= 30 && (daysLeft == 30 || daysLeft == 7 || daysLeft in 1..6) ->
-                    message = "Document alert: ${d.kind} expires in $daysLeft days (${exp.format(DateTimeFormatter.ofPattern("d MMM"))})."
+                    message = "Document alert: ${d.kind} expires in $daysLeft days (${exp.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))})."
             }
         }
 

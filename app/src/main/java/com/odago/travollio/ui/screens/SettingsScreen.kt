@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Refresh
@@ -23,9 +24,13 @@ import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -41,8 +46,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.odago.travollio.BuildConfig
+import com.odago.travollio.data.AgentConfig
+import com.odago.travollio.data.AgentProvider
 import com.odago.travollio.ui.Accent
 import com.odago.travollio.ui.AccentDeep
 import com.odago.travollio.ui.InkPrimary
@@ -271,6 +280,9 @@ fun SettingsScreen(darkTheme: Boolean, onDarkThemeChange: (Boolean) -> Unit) {
             }
         }
 
+        item { SectionHeader("AI Assistant") }
+        item { AiSettingsCard() }
+
         item { SectionHeader("About") }
         item {
             GlassCard(fill = MaterialTheme.colorScheme.primaryContainer) {
@@ -346,5 +358,127 @@ private fun VersionRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = InkSecondary, fontWeight = FontWeight.Medium)
         Text(value, style = MaterialTheme.typography.labelMedium, color = InkPrimary)
+    }
+}
+
+/**
+ * AI Assistant connection settings: pick a provider (OpenAI-compatible, incl. LM Studio /
+ * Ollama / custom), enter the API key + model, test the connection, and save.
+ * Persists via [AgentConfig.save]; the live agent (GeminiAgent) picks these up on next message.
+ */
+@Composable
+private fun AiSettingsCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var provider by remember { mutableStateOf(AgentConfig.provider) }
+    var baseUrl by remember { mutableStateOf(AgentConfig.baseUrl) }
+    var apiKey by remember { mutableStateOf(AgentConfig.apiKey) }
+    var model by remember { mutableStateOf(AgentConfig.model) }
+    var showProvider by remember { mutableStateOf(false) }
+    var testing by remember { mutableStateOf(false) }
+    var testResult by remember { mutableStateOf<String?>(null) }
+    var saved by remember { mutableStateOf(false) }
+
+    fun onProviderSelect(p: AgentProvider) {
+        provider = p
+        if (p != AgentProvider.CUSTOM) {
+            baseUrl = p.baseUrl
+            model = p.defaultModel
+        }
+        testResult = null
+        saved = false
+    }
+
+    fun save() {
+        AgentConfig.provider = provider
+        AgentConfig.baseUrl = baseUrl
+        AgentConfig.apiKey = apiKey
+        AgentConfig.model = model
+        AgentConfig.save(context)
+        saved = true
+        testResult = null
+    }
+
+    GlassCard {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("AI model", style = MaterialTheme.typography.titleSmall, color = AccentDeep)
+
+            // Provider picker (open-code-style: choose a provider, or custom endpoint).
+            Box {
+                Surface(
+                    onClick = { showProvider = true },
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Provider", style = MaterialTheme.typography.labelMedium, color = InkSecondary)
+                            Text(provider.label, style = MaterialTheme.typography.bodyMedium, color = InkPrimary)
+                        }
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = null, tint = InkSecondary)
+                    }
+                }
+                DropdownMenu(expanded = showProvider, onDismissRequest = { showProvider = false }) {
+                    AgentProvider.entries.forEach { p ->
+                        DropdownMenuItem(
+                            text = { Text((if (p.isLocal) "● " else "") + p.label, color = InkPrimary) },
+                            onClick = { onProviderSelect(p); showProvider = false }
+                        )
+                    }
+                }
+            }
+
+            OutlinedTextField(
+                value = baseUrl, onValueChange = { baseUrl = it; saved = false },
+                label = { Text("Base URL") }, singleLine = true
+            )
+            OutlinedTextField(
+                value = model, onValueChange = { model = it; saved = false },
+                label = { Text("Model") }, singleLine = true
+            )
+            OutlinedTextField(
+                value = apiKey, onValueChange = { apiKey = it; saved = false },
+                label = { Text(if (provider.needsApiKey) "API key" else "API key (optional)") },
+                singleLine = true,
+                visualTransformation = if (apiKey.isEmpty()) VisualTransformation.None else PasswordVisualTransformation()
+            )
+
+            if (provider.isLocal) {
+                Text(
+                    "Local model — set the Base URL to this computer's LAN address, e.g. http://192.168.1.5:1234/v1",
+                    style = MaterialTheme.typography.bodySmall, color = InkSecondary
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = ::save) { Text("Save", color = AccentDeep) }
+                TextButton(
+                    onClick = {
+                        testing = true; testResult = null; saved = false
+                        scope.launch {
+                            testResult = AgentConfig.test(baseUrl, apiKey, model)
+                            testing = false
+                        }
+                    },
+                    enabled = !testing
+                ) { Text(if (testing) "Testing…" else "Test connection", color = AccentDeep) }
+                if (!provider.needsApiKey) {
+                    TextButton(onClick = { AgentConfig.reset(context); provider = AgentConfig.provider; baseUrl = AgentConfig.baseUrl; apiKey = AgentConfig.apiKey; model = AgentConfig.model; saved = true; testResult = null }) {
+                        Text("Reset", color = InkSecondary)
+                    }
+                }
+            }
+
+            if (saved) Text("Saved ✓", style = MaterialTheme.typography.bodySmall, color = Sage)
+            testResult?.let { r ->
+                val ok = r.startsWith("Connected")
+                Text(r, style = MaterialTheme.typography.bodySmall, color = if (ok) Sage else InkSecondary)
+            }
+        }
     }
 }

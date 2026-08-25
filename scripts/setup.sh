@@ -43,7 +43,7 @@ else
 fi
 
 git remote remove origin 2>/dev/null || true
-git remote add origin "https://${OWNER}:${TOKEN}@github.com/${OWNER}/${REPO}.git"
+git remote add origin "https://github.com/${OWNER}/${REPO}.git"
 
 # 3) write the feed identity the app's Settings tab will use
 cat > github.local.properties <<EOF
@@ -55,7 +55,7 @@ EOF
 git add -A
 git commit -qm "configure update feed (${OWNER}/${REPO})" || true
 git branch -M main
-git push -u origin main 2>&1 | sed 's/^/  /'
+git -c "http.extraHeader=Authorization: bearer $TOKEN" push -u origin main 2>&1 | sed 's/^/  /'
 
 echo
 echo "Done. Repo: https://github.com/${OWNER}/${REPO}"

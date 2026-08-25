@@ -96,7 +96,7 @@ if [ -d "$DIR/.git" ]; then
     git -C "$DIR" tag -d "$TAG" >/dev/null 2>&1 || true
   fi
   git -C "$DIR" tag "$TAG"
-  git -C "$DIR" push --tags 2>&1 | sed 's/^/  /' || echo "  (tag push skipped/failed)"
+  git -C "$DIR" -c "http.extraHeader=Authorization: bearer $TOKEN" push --tags 2>&1 | sed 's/^/  /' || echo "  (tag push skipped/failed)"
 else
   echo "  (no .git -- skipping tag/push; use setup.sh to init + create the repo)"
 fi

@@ -1,6 +1,7 @@
 package com.odago.travollio.agent
 
 import com.odago.travollio.data.AppState
+import com.odago.travollio.ui.formatDate
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
@@ -15,7 +16,7 @@ object AgentEngine {
 
     const val MODE_LABEL = "local · offline-safe"
 
-    private val dayFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE d MMM")
+    private val dayFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
 
     fun respond(state: AppState, userText: String): String {
         val t = userText.lowercase()
@@ -91,11 +92,11 @@ object AgentEngine {
         val day = s.days.firstOrNull { it.date == today } ?: s.days.firstOrNull()
             ?: return "No days on the calendar yet."
         val items = s.items.filter { it.dayId == day.id }
-        if (items.isEmpty()) return "${day.city}, ${day.date} — nothing planned yet. Ask the online agent to add something once you're back online."
+        if (items.isEmpty()) return "${day.city}, ${formatDate(day.date)} — nothing planned yet. Ask the online agent to add something once you're back online."
         val lines = items.map { i ->
             val time = i.timeLocal ?: "—"
             "$time  ${i.title}"
         }
-        return "${day.city}, ${day.date}:\n" + lines.joinToString("\n")
+        return "${day.city}, ${formatDate(day.date)}:\n" + lines.joinToString("\n")
     }
 }

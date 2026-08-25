@@ -236,7 +236,7 @@ private fun AgentStatusPill() {
         border = BorderStroke(1.dp, Hairline)
     ) {
         Text(
-            if (online) "DeepSeek · online" else AgentEngine.MODE_LABEL,
+            AgentConfig.label,
             style = MaterialTheme.typography.labelSmall,
             color = if (online) AccentDeep else Sage,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)

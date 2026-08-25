@@ -36,6 +36,7 @@ import com.odago.travollio.ui.InkSecondary
 import com.odago.travollio.ui.components.AiSummaryCard
 import com.odago.travollio.ui.components.GlassCard
 import com.odago.travollio.ui.components.KindTile
+import com.odago.travollio.ui.formatDate
 import com.odago.travollio.ui.formatDayHeader
 import com.odago.travollio.ui.formatHome
 import com.odago.travollio.ui.formatLocal
@@ -69,7 +70,7 @@ fun TodayScreen(state: AppState, onItemClick: (Item) -> Unit, onOpenTrips: () ->
                                 val e = runCatching { LocalDate.parse(trip.endDate) }.getOrNull()
                                 val now = LocalDate.now()
                                 when {
-                                    s == null || e == null -> "${trip.name.uppercase()} · ${trip.startDate} → ${trip.endDate}"
+                                    s == null || e == null -> "${trip.name.uppercase()} · ${formatDate(trip.startDate)} → ${formatDate(trip.endDate)}"
                                     now.isBefore(s) -> "STARTS IN ${ChronoUnit.DAYS.between(now, s)} DAY${if (ChronoUnit.DAYS.between(now, s) == 1L) "" else "S"} · ${trip.name.uppercase()}"
                                     now.isAfter(e) -> "${trip.name.uppercase()} · ENDED — ASK ME TO ARCHIVE IT"
                                     day != null && dayIndex >= 0 -> "${trip.name.uppercase()} · DAY ${dayIndex + 1} OF ${state.days.size}"

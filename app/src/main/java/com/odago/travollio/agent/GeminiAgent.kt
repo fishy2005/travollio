@@ -36,7 +36,15 @@ class GeminiAgent(private val db: AppDatabase) {
 
     private var lastHttpError: String? = null
 
-    private val baseUrl = AgentConfig.deepSeekBaseUrl.trimEnd('/') + "/chat/completions"
+    /** Full chat-completions endpoint for the currently selected provider (runtime-configurable). */
+    private fun chatUrl(): String = AgentConfig.baseUrl.trimEnd('/') + "/chat/completions"
+
+    /** Format an ISO yyyy-MM-dd date as dd.MM.yyyy for human-facing agent replies. */
+    private fun dt(iso: String?): String {
+        if (iso.isNullOrBlank()) return ""
+        return runCatching { java.time.LocalDate.parse(iso).format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")) }
+            .getOrDefault(iso)
+    }
 
     private val systemPrompt = """
         You are Travollio — a crisp, smart trip assistant. You text like a fast, competent bot: short, plain, useful. No filler, no fluff, no emoji, no personality theatrics. One or two short sentences per reply, three max.
@@ -262,7 +270,7 @@ class GeminiAgent(private val db: AppDatabase) {
         var lastError: String? = null
         for (turn in 0 until 6) {
             val body = JSONObject()
-                .put("model", AgentConfig.deepSeekModel)
+                .put("model", AgentConfig.model)
                 .put("messages", messages)
                 .put("tools", tools)
                 .put("tool_choice", "auto")
@@ -403,7 +411,7 @@ class GeminiAgent(private val db: AppDatabase) {
             lastActionJson = JSONObject().put("type", "item").put("itemId", itemId).toString()
         }
         return JSONObject().put("ok", true)
-            .put("message", "Added '$title' to day ${days.indexOf(day) + 1} (${day.date}, ${day.city})")
+            .put("message", "Added '$title' to day ${days.indexOf(day) + 1} (${dt(day.date)}, ${day.city})")
     }
 
     private suspend fun itineraryUpdate(args: JSONObject): JSONObject {
@@ -452,7 +460,7 @@ class GeminiAgent(private val db: AppDatabase) {
             lastActionJson = JSONObject().put("type", "item").put("itemId", id).toString()
         }
         return JSONObject().put("ok", true)
-            .put("message", "Moved '${item.title}' to day ${days.indexOf(target) + 1} (${target.date}, ${target.city})")
+            .put("message", "Moved '${item.title}' to day ${days.indexOf(target) + 1} (${dt(target.date)}, ${target.city})")
     }
 
     private suspend fun itineraryRemove(args: JSONObject): JSONObject {
@@ -580,7 +588,7 @@ class GeminiAgent(private val db: AppDatabase) {
         )
         lastActionJson = JSONObject().put("type", "day").put("day", days.indexOf(day) + 1).toString()
         return JSONObject().put("ok", true)
-            .put("message", "Note saved for day ${days.indexOf(day) + 1} (${day.date}, ${day.city}).")
+            .put("message", "Note saved for day ${days.indexOf(day) + 1} (${dt(day.date)}, ${day.city}).")
     }
 
     private suspend fun filesList(): JSONObject {
@@ -621,7 +629,7 @@ class GeminiAgent(private val db: AppDatabase) {
         db.tripDao().update(updated)
         lastActionJson = JSONObject().put("type", "trip").toString()
         return JSONObject().put("ok", true)
-            .put("message", "Trip updated: ${updated.name} (${updated.startDate} → ${updated.endDate}, ${updated.baseCity}).")
+            .put("message", "Trip updated: ${updated.name} (${dt(updated.startDate)} → ${dt(updated.endDate)}, ${updated.baseCity}).")
     }
 
     private suspend fun moneyAdd(args: JSONObject): JSONObject {
@@ -679,10 +687,10 @@ class GeminiAgent(private val db: AppDatabase) {
             db.documentDao().update(
                 existing.copy(expiresAt = expiresAt ?: existing.expiresAt, filePath = filePath.ifBlank { existing.filePath })
             )
-            return JSONObject().put("ok", true).put("message", "Updated $kind document${expiresAt?.let { " (expires $it)" } ?: ""}.")
+            return JSONObject().put("ok", true).put("message", "Updated $kind document${expiresAt?.let { " (expires ${dt(it)})" } ?: ""}.")
         }
         db.documentDao().insert(Document(tripId = trip?.id, kind = kind, filePath = filePath, expiresAt = expiresAt))
-        return JSONObject().put("ok", true).put("message", "Added $kind document${expiresAt?.let { " (expires $it)" } ?: ""}.")
+        return JSONObject().put("ok", true).put("message", "Added $kind document${expiresAt?.let { " (expires ${dt(it)})" } ?: ""}.")
     }
 
     private suspend fun tripCreate(args: JSONObject): JSONObject {
@@ -702,7 +710,7 @@ class GeminiAgent(private val db: AppDatabase) {
         val id = db.tripDao().insert(Trip(name = name, startDate = start, endDate = end, baseCity = baseCity, budgetCapHomeCcy = cap, homeCcy = homeCcy, localCcy = localCcy))
         db.setActiveTrip(id)
         lastActionJson = JSONObject().put("type", "trip").toString()
-        return JSONObject().put("ok", true).put("message", "Created trip '$name' ($start → $end). Add days with day_add.")
+        return JSONObject().put("ok", true).put("message", "Created trip '$name' (${dt(start)} → ${dt(end)}). Add days with day_add.")
     }
 
     private suspend fun dayAdd(args: JSONObject): JSONObject {
@@ -716,7 +724,7 @@ class GeminiAgent(private val db: AppDatabase) {
         val newDays = db.dayDao().daysForTripOnce(trip.id)
         val idx = newDays.indexOfFirst { it.id == id } + 1
         lastActionJson = JSONObject().put("type", "day").put("day", idx).toString()
-        return JSONObject().put("ok", true).put("message", "Added Day ${idx.coerceAtLeast(1)} ($date, $city).")
+        return JSONObject().put("ok", true).put("message", "Added Day ${idx.coerceAtLeast(1)} (${dt(date)}, $city).")
     }
 
     private suspend fun dayUpdate(args: JSONObject): JSONObject {
@@ -739,11 +747,11 @@ class GeminiAgent(private val db: AppDatabase) {
         val idx = days.indexOf(target) + 1
         if (!args.optBoolean("confirm", false)) {
             return JSONObject().put("ok", false).put("needsConfirm", true)
-                .put("message", "This removes Day $idx (${target.date}, ${target.city}) and its items. Say 'confirmed' to delete it.")
+                .put("message", "This removes Day $idx (${dt(target.date)}, ${target.city}) and its items. Say 'confirmed' to delete it.")
         }
         db.dayDao().delete(target)
         lastActionJson = JSONObject().put("type", "trip").toString()
-        return JSONObject().put("ok", true).put("message", "Removed Day $idx (${target.date}, ${target.city}).")
+        return JSONObject().put("ok", true).put("message", "Removed Day $idx (${dt(target.date)}, ${target.city}).")
     }
 
     private suspend fun todayPlan(): JSONObject {
@@ -814,7 +822,7 @@ class GeminiAgent(private val db: AppDatabase) {
         val id = db.tripDao().insert(Trip(name = name, startDate = start, endDate = end, baseCity = baseCity, budgetCapHomeCcy = cap, homeCcy = homeCcy, localCcy = localCcy))
         db.setActiveTrip(id)
         lastActionJson = JSONObject().put("type", "trip").toString()
-        return JSONObject().put("ok", true).put("message", "Created '$name' ($start → $end) and made it the active trip.")
+        return JSONObject().put("ok", true).put("message", "Created '$name' (${dt(start)} → ${dt(end)}) and made it the active trip.")
     }
 
     private suspend fun tripSwitch(args: JSONObject): JSONObject {
@@ -938,10 +946,10 @@ class GeminiAgent(private val db: AppDatabase) {
 
     private fun post(body: JSONObject): JSONObject? {
         return try {
-            val conn = URL(baseUrl).openConnection() as HttpURLConnection
+            val conn = URL(chatUrl()).openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
-            val key = AgentConfig.deepSeekApiKey
+            val key = AgentConfig.apiKey
             if (key.isNotBlank()) conn.setRequestProperty("Authorization", "Bearer $key")
             conn.connectTimeout = 8_000
             conn.readTimeout = 30_000
@@ -953,7 +961,7 @@ class GeminiAgent(private val db: AppDatabase) {
                     conn.errorStream?.bufferedReader()?.use { it.readText() }?.take(200) ?: ""
                 } catch (_: Exception) { "" }
                 lastHttpError = "HTTP $code${if (errText.isNotBlank()) " — $errText" else ""}"
-                android.util.Log.w("TravollioAgent", "DeepSeek API $code: $errText")
+                android.util.Log.w("TravollioAgent", "Agent API $code: $errText")
                 null
             } else {
                 lastHttpError = null

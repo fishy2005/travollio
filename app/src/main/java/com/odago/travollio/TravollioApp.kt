@@ -11,6 +11,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.odago.travollio.data.AgentConfig
 import com.odago.travollio.routines.BudgetPaceWorker
 import java.io.File
 import java.io.PrintWriter
@@ -25,6 +26,8 @@ class TravollioApp : Application() {
     override fun onCreate() {
         super.onCreate()
         installCrashLogger()
+        // Restore the user's AI provider/key/model choice (falls back to the baked DeepSeek).
+        AgentConfig.load(this)
         scheduleRoutines()
     }
 
