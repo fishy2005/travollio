@@ -28,7 +28,9 @@ import java.net.URL
  *
  * The APK we install is signed with the SAME certificate as the installed app
  * (see the `signingConfigs.release` block in build.gradle.kts), otherwise Android
- * refuses the upgrade. HTTPS only — `usesCleartextTraffic` stays off.
+ * refuses the upgrade. The update feed is HTTPS; cleartext is permitted app-wide
+ * only so user-configured local LLM endpoints (LM Studio / Ollama over LAN/tailscale)
+ * work — the feed itself never uses it.
  */
 data class UpdateInfo(
     val versionCode: Int,
