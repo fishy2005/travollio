@@ -54,6 +54,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 # ── Version ────────────────────────────────────────────────────────────────
 CURR_CODE="$(grep -oE 'versionCode = [0-9]+' "$BG" | head -1 | grep -oE '[0-9]+')"
 CURR_NAME="$(grep -oE 'versionName = "[^"]+"' "$BG" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+NOTES=""
 
 if [ $# -ge 2 ]; then
   CODE="$1"; NAME="$2"; NOTES="${3:-}"
