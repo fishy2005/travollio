@@ -10,3 +10,4 @@ gemini.local.properties
 *.local.properties
 Travollio-*.apk
 *.idsig
+*.apkn
