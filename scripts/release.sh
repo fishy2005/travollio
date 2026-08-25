@@ -105,19 +105,20 @@ fi
 echo "publishing release ..."
 BODY_FILE="$(mktemp)"
 printf '%s' "$NOTES" > "$BODY_FILE"
-
-RELEASE_JSON="$(
-  curl -fsS -X POST "https://api.github.com/repos/${OWNER}/${REPO}/releases" \
-    -H "Authorization: bearer $TOKEN" \
-    -H "Accept: application/vnd.github+json" \
-    -d "$(python3 - "$TAG" "$BODY_FILE" <<'PY'
-import json,sys
-tag,bodyfile=sys.argv[1],sys.argv[2]
-print(json.dumps({"tag_name":tag,"name":tag,"body":open(bodyfile).read(),"prerelease":False}))
+PAYLOAD="$(mktemp)"
+python3 - "$TAG" "$BODY_FILE" "$PAYLOAD" <<'PY'
+import json, sys
+tag, bodyfile, out = sys.argv[1], sys.argv[2], sys.argv[3]
+json.dump({"tag_name": tag, "name": tag, "body": open(bodyfile).read(), "prerelease": False}, open(out, "w"))
 PY
-)"
-RELEASE_ID="$(python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])' <<< "$RELEASE_JSON")"
-rm -f "$BODY_FILE"
+RESP="$(mktemp)"
+curl -fsS -X POST "https://api.github.com/repos/${OWNER}/${REPO}/releases" \
+  -H "Authorization: bearer $TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  --data-binary "@$PAYLOAD" \
+  -o "$RESP"
+RELEASE_ID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["id"])' "$RESP")"
+rm -f "$BODY_FILE" "$PAYLOAD"
 
 echo "  uploaded ${APK_NAME} ..."
 curl -fsS -X POST \
@@ -126,6 +127,7 @@ curl -fsS -X POST \
   --data-binary "@$DIR/$APK_NAME" \
   "https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${RELEASE_ID}/assets?name=$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))' "$APK_NAME")" \
   >/dev/null && echo "  done"
+rm -f "$RESP"
 
 echo
 echo "Published https://github.com/${OWNER}/${REPO}/releases/tag/${TAG}"
