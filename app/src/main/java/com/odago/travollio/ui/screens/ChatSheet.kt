@@ -1,0 +1,558 @@
+package com.odago.travollio.ui.screens
+
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.dp
+import com.odago.travollio.agent.AgentEngine
+import com.odago.travollio.data.AgentConfig
+import com.odago.travollio.data.AppState
+import com.odago.travollio.data.ChatMessage
+import com.odago.travollio.ui.Accent
+import com.odago.travollio.ui.AccentDeep
+import com.odago.travollio.ui.AccentTint
+import com.odago.travollio.ui.Hairline
+import com.odago.travollio.ui.InkPrimary
+import com.odago.travollio.ui.InkSecondary
+import com.odago.travollio.ui.InkTertiary
+import com.odago.travollio.ui.Sage
+import com.odago.travollio.ui.components.pressScale
+import com.odago.travollio.ui.components.springSnappy
+import com.odago.travollio.ui.tvColors
+
+/**
+ * The AI assistant as a full-screen, first-class part of the app (like a chat app).
+ * Lives on its own tab. Conversational, with attachments (photos/screenshots/receipts)
+ * and a live "thinking" state. No longer hidden behind a small orb.
+ */
+@Composable
+fun AssistantScreen(
+    state: AppState,
+    isThinking: Boolean,
+    lastOutcome: String?,
+    onSend: (String, List<Uri>) -> Unit,
+    onGoto: (String) -> Unit,
+    onReset: () -> Unit
+) {
+    val listState = rememberLazyListState()
+    var showResetDialog by remember { mutableStateOf(false) }
+
+    // Keep the newest message in view: re-anchors when a message lands, when the thinking
+    // bubble appears, and when the keyboard opens (IME inset changes shrink the list).
+    val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
+    LaunchedEffect(state.chat.size, isThinking, imeBottom) {
+        if (state.chat.isNotEmpty()) {
+            val target = (state.chat.lastIndex + if (isThinking) 1 else 0).coerceAtLeast(0)
+            // jump when a big change (keyboard just opened), animate otherwise
+            if (imeBottom > 0) listState.scrollToItem(target) else listState.animateScrollToItem(target)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding()
+            .navigationBarsPadding()
+    ) {
+        // Header
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.SmartToy, contentDescription = null, tint = AccentDeep, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.size(8.dp))
+                Text("Assistant", style = MaterialTheme.typography.headlineMedium, color = InkPrimary)
+                Box(Modifier.weight(1f))
+                AgentStatusPill()
+                IconButton(
+                    onClick = { showResetDialog = true },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Refresh,
+                        contentDescription = "Restart agent",
+                        tint = InkSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            Text(
+                "Your Travollio AI — ask it to plan, change, price or file anything.",
+                style = MaterialTheme.typography.labelSmall,
+                color = InkTertiary
+            )
+            // Persistent diagnostic line: shows exactly what happened on the last send so a
+            // silent failure is impossible to miss. It only appears when there's a problem.
+            if (lastOutcome != null) {
+                Text(
+                    "⚠ $lastOutcome",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+        }
+        HorizontalDivider(color = Hairline, thickness = 0.5.dp)
+
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (state.chat.isEmpty()) {
+                item(key = "welcome") { WelcomeHint() }
+            }
+            items(state.chat, key = { it.id }) { msg ->
+                ChatBubble(msg = msg, onGoto = onGoto)
+            }
+            if (isThinking) {
+                item(key = "thinking") { ThinkingBubble() }
+            }
+        }
+
+        HorizontalDivider(color = Hairline, thickness = 0.5.dp)
+        ChatInput(state = state, onSend = onSend)
+        Spacer(Modifier.height(10.dp))
+    }
+
+    if (showResetDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetDialog = false },
+            shape = RoundedCornerShape(22.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = { Text("Restart agent?", color = InkPrimary) },
+            text = {
+                Text(
+                    "This clears the whole conversation. The agent will no longer remember previous messages — it will only know what is already saved in your trip.",
+                    color = InkSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onReset()
+                    showResetDialog = false
+                }) { Text("Restart", color = AccentDeep) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetDialog = false }) { Text("Cancel", color = InkSecondary) }
+            }
+        )
+    }
+}
+
+/** Friendly empty state so a first visit isn't a blank wall. */
+@Composable
+private fun WelcomeHint() {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 28.dp, horizontal = 8.dp)
+    ) {
+        Text(
+            "Plan with your AI assistant",
+            style = MaterialTheme.typography.headlineSmall,
+            color = InkPrimary
+        )
+        Text(
+            "Try: \"Move the massage to 15:00\", \"What's my budget pace?\", \"Add a sushi dinner on day 3\", or \"Summarize day 2\". You can also attach a receipt or screenshot.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = InkSecondary
+        )
+    }
+}
+
+@Composable
+private fun AgentStatusPill() {
+    val online = AgentConfig.isConfigured
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, Hairline)
+    ) {
+        Text(
+            if (online) "DeepSeek · online" else AgentEngine.MODE_LABEL,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (online) AccentDeep else Sage,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+        )
+    }
+}
+
+/** Chat bubble: baby-blue for the user, dark glass for the assistant. */
+@Composable
+private fun ChatBubble(msg: ChatMessage, onGoto: (String) -> Unit) {
+    val isUser = msg.role == "user"
+    val shape = RoundedCornerShape(
+        topStart = 18.dp,
+        topEnd = 18.dp,
+        bottomStart = if (isUser) 18.dp else 6.dp,
+        bottomEnd = if (isUser) 6.dp else 18.dp
+    )
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        shape = shape,
+        color = if (isUser) Accent else MaterialTheme.tvColors.glassSurface
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Text(
+                msg.text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = InkPrimary
+            )
+            // Attachments the user sent with this message (from cardJson)
+            msg.cardJson?.let { json ->
+                attachmentNames(json).forEach { name ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                        Icon(
+                            Icons.Filled.AttachFile,
+                            contentDescription = null,
+                            tint = if (isUser) InkPrimary else InkSecondary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.size(4.dp))
+                        Text(
+                            name,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isUser) InkPrimary else InkSecondary,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+            // Deep-link button: only on assistant turns that changed something.
+            if (!isUser && msg.actionJson != null) {
+                val label = actionLabel(msg.actionJson)
+                if (label != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .padding(top = 8.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(AccentTint)
+                            .clickable { onGoto(msg.actionJson) }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = null,
+                            tint = AccentDeep,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.size(6.dp))
+                        Text(label, style = MaterialTheme.typography.labelMedium, color = AccentDeep)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Human label for a deep-link action, or null if it shouldn't render a button. */
+private fun actionLabel(actionJson: String): String? = try {
+    val o = org.json.JSONObject(actionJson)
+    when (o.optString("type")) {
+        "item" -> "View change"
+        "day" -> {
+            val d = o.optInt("day", -1)
+            if (d >= 1) "Open Day $d" else "View day"
+        }
+        "money" -> "Open budget"
+        "trip" -> "View trip"
+        else -> null
+    }
+} catch (_: Exception) {
+    null
+}
+
+/** File names from a chat message's cardJson ([{"id":1,"name":"receipt.jpg"}]). */
+private fun attachmentNames(cardJson: String): List<String> = try {
+    val arr = org.json.JSONArray(cardJson)
+    (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.optString("name") }
+} catch (_: Exception) {
+    emptyList()
+}
+
+/** "…" thinking bubble with three staggered-pulse dots (spring-free — pure alpha pulse). */
+@Composable
+private fun ThinkingBubble() {
+    val transition = rememberInfiniteTransition(label = "thinking")
+    val dots = listOf(0, 220, 440)
+    Row(
+        modifier = Modifier.padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        dots.forEach { delay ->
+            val alpha by transition.animateFloat(
+                initialValue = 0.25f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 600, delayMillis = delay),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "dot$delay"
+            )
+            Box(
+                Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(Accent.copy(alpha = alpha))
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChatInput(state: AppState, onSend: (String, List<Uri>) -> Unit) {
+    var text by remember { mutableStateOf("") }
+    var pending by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    val pickLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetMultipleContents()
+    ) { uris -> if (uris.isNotEmpty()) pending = uris }
+
+    val canSend = text.isNotBlank() || pending.isNotEmpty()
+
+    Column(modifier = Modifier.padding(horizontal = 12.dp)) {
+        // Context-aware quick suggestions — tap to drop into the field (edit, then send —
+        // handy when you also want to attach a Word itinerary).
+        if (pending.isEmpty() && text.isBlank()) {
+            val suggestions = suggestionChips(state)
+            if (suggestions.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    suggestions.forEach { s ->
+                        SuggestionChip(label = s, onClick = {
+                            text = s
+                        })
+                    }
+                }
+            }
+        }
+        // Pending attachment chips (shown once files are picked, before sending)
+        if (pending.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                pending.take(3).forEach { uri ->
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = AccentTint,
+                        modifier = Modifier.pressScale()
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.AttachFile,
+                                contentDescription = null,
+                                tint = AccentDeep,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(Modifier.size(5.dp))
+                            Text(
+                                uri.lastPathSegment?.substringAfterLast('/') ?: "file",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = AccentDeep,
+                                maxLines = 1
+                            )
+                            IconButton(
+                                onClick = { pending = pending - uri },
+                                modifier = Modifier.size(20.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.Close,
+                                    contentDescription = "Remove",
+                                    tint = AccentDeep,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                if (pending.size > 3) {
+                    Text(
+                        "+${pending.size - 3}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = InkTertiary,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                }
+            }
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Attach button
+            IconButton(onClick = { pickLauncher.launch("*/*") }) {
+                Icon(Icons.Filled.AttachFile, contentDescription = "Attach photo or file", tint = InkSecondary)
+            }
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                modifier = Modifier.weight(1f),
+                placeholder = { Text("Ask about budget, plan, docs…", color = InkTertiary) },
+                shape = RoundedCornerShape(22.dp),
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = AccentDeep,
+                    unfocusedBorderColor = Hairline,
+                    focusedContainerColor = MaterialTheme.tvColors.glassSurface,
+                    unfocusedContainerColor = MaterialTheme.tvColors.glassSurface,
+                    cursorColor = AccentDeep,
+                    focusedTextColor = InkPrimary,
+                    unfocusedTextColor = InkPrimary
+                )
+            )
+            Spacer(Modifier.size(8.dp))
+            // Round send button; springs up when there is something to send
+            val interaction = remember { MutableInteractionSource() }
+            val pressed by interaction.collectIsPressedAsState()
+            val scale by animateFloatAsState(
+                targetValue = if (pressed) 0.9f else if (canSend) 1f else 0.94f,
+                animationSpec = springSnappy(),
+                label = "sendScale"
+            )
+            val sendBrush =
+                if (canSend) Brush.verticalGradient(listOf(AccentDeep, Accent)) else SolidColor(InkTertiary.copy(alpha = 0.5f))
+            Surface(
+                onClick = {
+                    if (canSend) {
+                        onSend(text.trim(), pending)
+                        text = ""
+                        pending = emptyList()
+                    }
+                },
+                enabled = canSend,
+                interactionSource = interaction,
+                shape = CircleShape,
+                color = Color.Transparent,
+                modifier = Modifier
+                    .size(46.dp)
+                    .background(sendBrush, CircleShape)
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                    }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "Send",
+                        tint = InkPrimary
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Context-aware short suggestions that drop into the input field. */
+private fun suggestionChips(state: AppState): List<String> = buildList {
+    if (state.trip == null) {
+        add("Plan a trip: Tokyo, 5 days, ¥120k budget")
+        add("Create my trip from a Word itinerary")
+    } else {
+        val today = java.time.LocalDate.now().toString()
+        val onToday = state.days.any { it.date == today }
+        if (onToday) add("What's today's plan?")
+        if (onToday) add("Log today's lunch cost")
+        add("Change a time in the plan")
+        add("Archive this trip and start a new one")
+        add("Show my spent budget so far")
+        add("Import a Word itinerary into a new trip")
+    }
+}.take(5)
+
+/** Compact pill that just fills the composer when tapped. */
+@Composable
+private fun SuggestionChip(label: String, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = AccentTint,
+        modifier = Modifier.pressScale()
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = AccentDeep, maxLines = 1)
+        }
+    }
+}

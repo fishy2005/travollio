@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Attachments live in app-private internal storage under filesDir/attachments/ -->
+    <files-path name="attachments" path="attachments/" />
+    <!-- Downloaded update APKs live under cacheDir/updates/ -->
+    <cache-path name="updates" path="updates/" />
+</paths>

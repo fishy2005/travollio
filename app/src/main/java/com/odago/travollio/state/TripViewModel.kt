@@ -1,0 +1,432 @@
+package com.odago.travollio.state
+
+import android.app.Application
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.provider.OpenableColumns
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.odago.travollio.agent.AgentEngine
+import com.odago.travollio.agent.GeminiAgent
+import com.odago.travollio.data.AppDatabase
+import com.odago.travollio.data.AppState
+import com.odago.travollio.data.Attachment
+import com.odago.travollio.data.AttachmentMeta
+import com.odago.travollio.data.ChatMessage
+import com.odago.travollio.data.Trip
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.time.Instant
+import java.util.UUID
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class TripViewModel(app: Application) : AndroidViewModel(app) {
+
+    private val db = AppDatabase.get(app.applicationContext)
+
+    /** Which trip is active: the selected non-archived trip (falls back to oldest non-archived). */
+    private val activeTrip: Flow<Trip?> = combine(
+        db.tripDao().all(),
+        db.routineStateDao().stateFlow(AppDatabase.ACTIVE_KEY)
+    ) { trips, activeId ->
+        val id = activeId?.toLongOrNull()
+        if (id != null) trips.firstOrNull { it.id == id && !it.isArchived }
+            ?: trips.filter { !it.isArchived }.minByOrNull { it.id }
+        else trips.filter { !it.isArchived }.minByOrNull { it.id }
+    }
+
+    val state = activeTrip
+        .flatMapLatest { trip ->
+            if (trip == null) flowOf(AppState.empty()) // trip-data UI shows a "no trip" state
+            else combine(
+                db.dayDao().daysForTrip(trip.id),
+                db.transactionDao().forTrip(trip.id),
+                db.itemDao().itemsForTrip(trip.id),
+                db.documentDao().all()
+            ) { days, txs, items, docs ->
+                AppState(
+                    trip = trip,
+                    days = days,
+                    items = items,
+                    transactions = txs,
+                    documents = docs
+                )
+            }
+                .combine(db.dailyNoteDao().forTrip(trip.id)) { s, notes ->
+                    s.copy(notes = notes)
+                }
+        }
+        // Chat is NOT trip-scoped: it must render even when no trip exists, otherwise every
+        // reply (including error/offline replies) is inserted but invisible — the original
+        // "thinking → stops → nothing appears" bug.
+        .combine(db.chatMessageDao().all()) { s, chat ->
+            s.copy(chat = chat)
+        }
+        .combine(db.attachmentDao().all()) { s, attachments ->
+            s.copy(attachments = attachments)
+        }
+        .combine(db.tripDao().all()) { s, trips ->
+            s.copy(availableTrips = trips)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AppState.empty())
+
+    /** True while a reply is being produced (cloud round-trip or local), so the UI can show a "thinking" state. */
+    private val _isThinking = MutableStateFlow(false)
+    val isThinking: StateFlow<Boolean> = _isThinking.asStateFlow()
+
+    /** Survives for this session: the outcome of the LAST send, shown on-screen so the user never
+     *  has to hunt for a log file to understand why the agent didn't answer. */
+    private val _lastOutcome = MutableStateFlow<String?>(null)
+    val lastOutcome: StateFlow<String?> = _lastOutcome.asStateFlow()
+
+    /**
+     * Send a chat turn, optionally with attachments (photos/files the user picked).
+     * Attachments are copied into the app-private sandbox first — the agent only ever
+     * sees our own paths, never the caller's URIs (OWASP storage/URI-hygiene).
+     */
+    fun send(text: String, attachmentUris: List<Uri> = emptyList()) {
+        val trimmed = text.trim().take(2000)
+        if (trimmed.isEmpty() && attachmentUris.isEmpty()) return
+        if (_isThinking.value) return // no re-entrant sends while a reply is in flight
+        viewModelScope.launch {
+            _isThinking.value = true
+            try {
+                val history = state.value.chat
+                val metas = attachmentUris.mapNotNull { importAttachment(it) }
+                val cardJson = if (metas.isEmpty()) null else JSONArray().apply {
+                    metas.forEach { m -> put(JSONObject().put("id", m.id).put("name", m.name)) }
+                }.toString()
+                db.chatMessageDao().insert(
+                    ChatMessage(
+                        ts = Instant.now().toString(),
+                        role = "user",
+                        text = trimmed.ifEmpty { "(attachment)" },
+                        cardJson = cardJson
+                    )
+                )
+                // GUARANTEE a reply: never leave the user with "thinking" and no message.
+                var reply: String
+                var actionJson: String? = null
+                try {
+                    // Hard cap on the whole cloud round-trip so the chat can never stall.
+                    val result = withTimeout(20_000) { GeminiAgent(db).respond(history, trimmed, metas) }
+                    recordOutcome(OUTCOME_OK, "DeepSeek agent reply")
+                    actionJson = result.actionJson
+                    reply = if (result.text.isNotBlank()) result.text else localFallback(trimmed, null)
+                } catch (e: GeminiAgent.CloudException) {
+                    android.util.Log.e("TravollioAgent", "Cloud agent failed: ${e.message}", e)
+                    recordOutcome(OUTCOME_OFFLINE, "couldn't reach online agent: ${e.message ?: "unknown error"}")
+                    reply = localFallback(trimmed, e.message)
+                } catch (e: Exception) {
+                    android.util.Log.e("TravollioAgent", "Agent threw, using local engine", e)
+                    val ex = "${e.javaClass.simpleName}: ${e.message}"
+                    recordOutcome(OUTCOME_OFFLINE, "agent threw: $ex")
+                    reply = localFallback(trimmed, null)
+                }
+                db.chatMessageDao().insert(
+                    ChatMessage(ts = Instant.now().toString(), role = "assistant", text = reply, actionJson = actionJson)
+                )
+                logLastMessage(trimmed, reply)
+            } catch (e: Exception) {
+                // Last-resort: even if the DB write failed, surface an honest message and never hang.
+                android.util.Log.e("TravollioAgent", "send() failed", e)
+                recordOutcome(OUTCOME_ERROR, "send() failed: ${e.javaClass.simpleName}: ${e.message}")
+                try {
+                    db.chatMessageDao().insert(
+                        ChatMessage(
+                            ts = Instant.now().toString(),
+                            role = "assistant",
+                            text = "I hit a snag (${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}). Try again in a moment."
+                        )
+                    )
+                } catch (_: Exception) {}
+            } finally {
+                _isThinking.value = false
+            }
+        }
+    }
+
+    /** "Restart the agent": wipe the conversation so the next send has no prior chat context.
+     *  From that point the agent knows the trip only from what is saved (fetched via its tools). */
+    fun resetConversation() {
+        viewModelScope.launch {
+            try {
+                db.chatMessageDao().clear()
+            } catch (_: Exception) {}
+            _lastOutcome.value = null
+        }
+    }
+
+    // ---- Trip management (available from the Today hub, not only via the agent) ----
+
+    fun switchTrip(tripId: Long) = viewModelScope.launch {
+        val t = db.tripDao().tripOnce(tripId) ?: return@launch
+        if (t.isArchived) db.tripDao().update(t.copy(isArchived = false))
+        db.setActiveTrip(tripId)
+    }
+
+    fun archiveTrip(tripId: Long) = viewModelScope.launch {
+        val t = db.tripDao().tripOnce(tripId) ?: return@launch
+        db.tripDao().update(t.copy(isArchived = true))
+        val next = db.tripDao().allOnce().filter { !it.isArchived }.minByOrNull { it.id }
+        db.setActiveTrip(next?.id)
+    }
+
+    fun updateTrip(trip: Trip) = viewModelScope.launch {
+        if (trip.id > 0) db.tripDao().update(trip)
+    }
+
+    fun createTrip(trip: Trip) = viewModelScope.launch {
+        val id = db.tripDao().insert(trip.copy(isArchived = false))
+        db.setActiveTrip(id)
+    }
+
+    fun deleteTrip(tripId: Long) = viewModelScope.launch {
+        val t = db.tripDao().tripOnce(tripId) ?: return@launch
+        db.documentDao().deleteAll(tripId)
+        db.tripDao().delete(t)
+        val next = db.tripDao().allOnce().filter { !it.isArchived }.minByOrNull { it.id }
+        db.setActiveTrip(next?.id)
+    }
+
+    /** Grounded local-engine answer used whenever the cloud agent is unavailable. */
+    private suspend fun localFallback(text: String, reason: String?): String = try {        val local = AgentEngine.respond(state.value, text).ifBlank {
+            "I'm offline right now and couldn't pull that together — try again shortly."
+        }
+        if (local.contains("offline", ignoreCase = true) || local.contains("fallback", ignoreCase = true)) {
+            local
+        } else {
+            val why = if (reason != null) " (couldn't reach the online agent: $reason)" else ""
+            "The online agent is unavailable$why, so here's the offline answer:\n\n$local"
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("TravollioAgent", "localFallback threw", e)
+        "I couldn't reach the online agent right now. Please try again in a moment."
+    }
+
+    /** Outcome tags for the on-screen status line. */
+    private companion object {
+        const val OUTCOME_OK = "ok"
+        const val OUTCOME_OFFLINE = "offline"
+        const val OUTCOME_ERROR = "error"
+        const val VISIBLE_LOG = "Travollio_diagnostics.log"
+    }
+
+    /**
+     * Record the result of a send attempt: (a) surface it on-screen via [lastOutcome] so the user
+     * never has to hunt for a file, and (b) append to a diagnostics log that is actually readable
+     * on a modern phone. getExternalFilesDir(...)/crash_log.txt is hidden from file managers on
+     * Android 11+ (that's why the original log was "not found"), so we ALSO append to a MediaStore
+     * file in Downloads — reachable via the Downloads / My Files app and file pickers.
+     * Everything is best-effort: the logger must never be able to fail the app.
+     */
+    private fun recordOutcome(kind: String, detail: String, exception: Throwable? = null) {
+        val stamp = Instant.now().toString()
+        val line = "[$stamp] $kind — $detail"
+        // Only a non-success surfaces an on-screen banner; a good reply keeps the UI clean.
+        _lastOutcome.value = if (kind == OUTCOME_OK) null else detail
+        if (exception != null) {
+            android.util.Log.e("TravollioAgent", "Agent diagnostic: $line", exception)
+        } else {
+            android.util.Log.i("TravollioAgent", "Agent diagnostic: $line")
+        }
+        appendDiagnostics("$line\n")
+    }
+
+    /**
+     * Write the last exchange to the diagnostics log so the newest user message and the
+     * reply are readable on-device (Downloads/Travollio_diagnostics.log) without opening the DB.
+     * Truncated — we log a short echo, not the whole thread.
+     */
+    private fun logLastMessage(userText: String, reply: String) {
+        appendDiagnostics("user — ${userText.take(300).noNewlines()}\nassistant — ${reply.take(600).noNewlines()}\n")
+    }
+
+    private fun String.noNewlines(): String = replace("\n", " ⏎ ")
+
+    private fun String.stripNewlines(): String = replace("\n", " ⏎ ")
+
+    /** Best-effort append to both the app-private and the visible Downloads log. */
+    private fun appendDiagnostics(entry: String) {
+        try {
+            val ctx = getApplication<Application>()
+            File(ctx.getExternalFilesDir(null), "crash_log.txt").appendText(entry)
+        } catch (_: Exception) {}
+        try {
+            val ctx = getApplication<Application>()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appendToDownloads(ctx, entry)
+            }
+        } catch (_: Exception) {}
+    }
+
+    /** Append to a stable, user-openable log in Downloads via MediaStore (visible to the user). */
+    private fun appendToDownloads(ctx: android.content.Context, entry: String) {
+        val resolver = ctx.contentResolver
+        // Reuse an existing Travollio_diagnostics.log row if present, else create one.
+        var uri: android.net.Uri? = null
+        resolver.query(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.MediaColumns._ID),
+            "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+            arrayOf(VISIBLE_LOG),
+            null
+        )?.use { c ->
+            if (c.moveToFirst()) {
+                val id = c.getLong(c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
+                uri = android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
+            }
+        }
+        if (uri == null) {
+            val values = android.content.ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, VISIBLE_LOG)
+                put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                put(MediaStore.MediaColumns.IS_PENDING, 0)
+            }
+            uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        }
+        if (uri == null) return
+        try {
+            resolver.openOutputStream(uri, "wa")?.use { it.write(entry.toByteArray()) }
+        } catch (_: Exception) {
+            // Fall back to overwrite if the OS doesn't allow appending.
+            resolver.openOutputStream(uri, "w")?.use { it.write(entry.toByteArray()) }
+        }
+    }
+
+    /** File attachments straight onto a moment from the dossier sheet. */
+    fun attachToItem(itemId: Long, uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            uris.forEach { uri ->
+                importAttachment(uri)?.let { m ->
+                    db.attachmentDao().insert(
+                        Attachment(
+                            itemId = itemId,
+                            fileName = m.name,
+                            mimeType = m.mime,
+                            filePath = m.path,
+                            createdAt = Instant.now().toString()
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /** Copy a picked file into filesDir/attachments/ (sandbox), insert an unlinked row, return its meta. */
+    private suspend fun importAttachment(uri: Uri): AttachmentMeta? = withContext(Dispatchers.IO) {
+        try {
+            val ctx = getApplication<Application>()
+            val resolver = ctx.contentResolver
+            val mime = resolver.getType(uri) ?: guessMime(uri.lastPathSegment)
+            val name = resolver.query(uri, null, null, null, null)?.use { c ->
+                val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) c.getString(idx) else null
+            } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+            val dir = File(ctx.filesDir, "attachments").apply { mkdirs() }
+            val dest = File(dir, UUID.randomUUID().toString() + extFor(mime, name))
+            val ok = resolver.openInputStream(uri)?.use { input ->
+                dest.outputStream().use { out -> input.copyTo(out) }
+                true
+            } ?: false
+            if (!ok || dest.length() == 0L || dest.length() > 20L * 1024 * 1024) {
+                dest.delete()
+                return@withContext null
+            }
+            val id = db.attachmentDao().insert(
+                Attachment(
+                    itemId = null,
+                    fileName = name,
+                    mimeType = mime,
+                    filePath = dest.absolutePath,
+                    createdAt = Instant.now().toString()
+                )
+            )
+            val text = if (isDocx(mime, name)) extractDocxText(dest) else null
+            AttachmentMeta(id = id, name = name, mime = mime, path = dest.absolutePath, text = text)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun isDocx(mime: String, name: String): Boolean =
+        mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+            name.substringAfterLast('.', "").equals("docx", ignoreCase = true)
+
+    /**
+     * Extract plain text from a .docx (OOXML) — it's a zip containing word/document.xml.
+     * Uses only built-in Android APIs (java.util.zip + XML text stripping), no added dependency.
+     * Returns up to 8000 chars of readable text, or null on any failure.
+     */
+    private fun extractDocxText(file: File): String? = try {
+        val sb = StringBuilder()
+        java.util.zip.ZipInputStream(file.inputStream().buffered()).use { zip ->
+            var e = zip.nextEntry
+            while (e != null) {
+                if (!e.isDirectory && e.name == "word/document.xml") {
+                    val raw = zip.bufferedReader().readText()
+                    // paragraph/table ends -> newlines, then strip all tags, collapse whitespace
+                    sb.append(raw.replace("</w:p>", "\n").replace("</w:tr>", "\n"))
+                    break
+                }
+                e = zip.nextEntry
+            }
+        }
+        val text = sb.toString()
+            .replace(Regex("<[^>]+>"), "")
+            .replace(Regex("\\u00a0"), " ")
+            .replace(Regex("[ \\t]+"), " ")
+            .replace(Regex("\\n{3,}"), "\n\n")
+            .trim()
+        text.take(8000).ifBlank { null }
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun guessMime(name: String?): String = when (name?.substringAfterLast('.', "")?.lowercase()) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        "webp" -> "image/webp"
+        "gif" -> "image/gif"
+        "pdf" -> "application/pdf"
+        "docx", "doc" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        "txt" -> "text/plain"
+        "csv" -> "text/csv"
+        "json" -> "application/json"
+        else -> "application/octet-stream"
+    }
+
+    private fun extFor(mime: String, name: String): String {
+        val byMime = when {
+            mime == "image/jpeg" -> ".jpg"
+            mime == "image/png" -> ".png"
+            mime == "image/webp" -> ".webp"
+            mime == "image/gif" -> ".gif"
+            mime == "application/pdf" -> ".pdf"
+            mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> ".docx"
+            else -> null
+        }
+        if (byMime != null) return byMime
+        val fromName = name.substringAfterLast('.', "").takeIf { it.length in 1..5 }
+        return if (!fromName.isNullOrBlank()) ".$fromName" else ".bin"
+    }
+}

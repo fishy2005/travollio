@@ -1,0 +1,12 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+captures/
+.cxx/
+app/schemas/
+gemini.local.properties
+*.local.properties
+Travollio-*.apk
+*.idsig
