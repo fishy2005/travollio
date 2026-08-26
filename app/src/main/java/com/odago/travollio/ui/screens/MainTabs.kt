@@ -1,27 +1,32 @@
 package com.odago.travollio.ui.screens
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -33,12 +38,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.odago.travollio.data.Item
 import com.odago.travollio.state.TripViewModel
 import com.odago.travollio.ui.Accent
 import com.odago.travollio.ui.AccentDeep
+import com.odago.travollio.ui.DesignTokens
+import com.odago.travollio.ui.SoftShadowA
+import com.odago.travollio.ui.SoftShadowB
+import com.odago.travollio.ui.components.pressScale
 import com.odago.travollio.ui.components.springSnappy
 import com.odago.travollio.ui.tvColors
 
@@ -90,7 +101,7 @@ fun MainTabs(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        bottomBar = { GlassNavBar(selected = tab, onSelect = { tab = it }) }
+        bottomBar = { GlassDock(selected = tab, onSelect = { tab = it }) }
     ) { padding ->
         Box(
             modifier = Modifier
@@ -160,34 +171,59 @@ fun MainTabs(
     }
 }
 
-/** Solid-ish theme surface tab bar with a hairline top border — iOS tab bar language. */
+/** Floating glass dock: a frosted pill bar, centered with side + bottom margins,
+ *  each tab behind an animated pill-highlight "active" indicator, iOS-style. */
 @Composable
-private fun GlassNavBar(selected: Int, onSelect: (Int) -> Unit) {
-    Box {
-        NavigationBar(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-            tonalElevation = 0.dp
+private fun GlassDock(selected: Int, onSelect: (Int) -> Unit) {
+    val shape = RoundedCornerShape(DesignTokens.radiusDock)
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Surface(
+            shape = shape,
+            color = MaterialTheme.tvColors.glassPanel,
+            border = BorderStroke(0.5.dp, MaterialTheme.tvColors.glassBorder),
+            modifier = Modifier
+                .padding(start = 24.dp, end = 24.dp, bottom = 14.dp)
+                .shadow(elevation = 14.dp, shape = shape, ambientColor = SoftShadowA, spotColor = SoftShadowB)
         ) {
-            Tab.entries.forEachIndexed { i, t ->
-                NavigationBarItem(
-                    selected = selected == i,
-                    onClick = { onSelect(i) },
-                    icon = { Icon(t.icon, contentDescription = t.label) },
-                    label = { Text(t.label, style = MaterialTheme.typography.labelSmall) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = AccentDeep,
-                        selectedTextColor = AccentDeep,
-                        indicatorColor = Accent.copy(alpha = 0.16f),
-                        unselectedIconColor = MaterialTheme.tvColors.textTertiary,
-                        unselectedTextColor = MaterialTheme.tvColors.textTertiary
-                    )
-                )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Tab.entries.forEachIndexed { i, t ->
+                    DockItem(tab = t, selected = selected == i, onClick = { onSelect(i) })
+                }
             }
         }
-        HorizontalDivider(
-            modifier = Modifier.align(Alignment.TopCenter),
-            color = MaterialTheme.tvColors.hairline,
-            thickness = 0.5.dp
-        )
+    }
+}
+
+@Composable
+private fun DockItem(tab: Tab, selected: Boolean, onClick: () -> Unit) {
+    val bg by animateColorAsState(
+        targetValue = if (selected) Accent.copy(alpha = 0.16f) else Color.Transparent,
+        animationSpec = springSnappy(),
+        label = "dockBg"
+    )
+    val fg by animateColorAsState(
+        targetValue = if (selected) AccentDeep else MaterialTheme.tvColors.textTertiary,
+        animationSpec = springSnappy(),
+        label = "dockFg"
+    )
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(20.dp),
+        color = bg,
+        contentColor = fg,
+        modifier = Modifier.pressScale()
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Icon(tab.icon, contentDescription = tab.label, tint = fg, modifier = Modifier.size(22.dp))
+            Text(tab.label, style = MaterialTheme.typography.labelSmall, color = fg)
+        }
     }
 }

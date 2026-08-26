@@ -40,8 +40,10 @@ import com.odago.travollio.ui.InkTertiary
 import com.odago.travollio.ui.Sage
 import com.odago.travollio.ui.SageTint
 import com.odago.travollio.ui.components.AiSummaryCard
+import com.odago.travollio.ui.components.DuoIconContainer
 import com.odago.travollio.ui.components.GlassCard
-import com.odago.travollio.ui.components.KindTile
+import com.odago.travollio.ui.components.MetadataChip
+import com.odago.travollio.ui.components.TimePill
 import com.odago.travollio.ui.formatDate
 import com.odago.travollio.ui.formatDayHeader
 import com.odago.travollio.ui.formatHome
@@ -151,8 +153,8 @@ fun TodayScreen(state: AppState, onItemClick: (Item) -> Unit, onOpenTrips: () ->
                 val item = items[i]
                 GlassCard(
                     modifier = Modifier.animateItem(),
-                    cornerRadius = 18.dp,
-                    contentPadding = 14.dp,
+                    cornerRadius = 20.dp,
+                    contentPadding = 16.dp,
                     onClick = { onItemClick(item) }
                 ) {
                     ItineraryRow(item)
@@ -247,33 +249,34 @@ private fun PaceChip(label: String, hot: Boolean) {
     }
 }
 
-/** One Meta-style itinerary row: KindTile glyph + title/detail, gold time & cost on the right. */
+/** One Meta-style itinerary row: duotone icon + title/metadata, time pill + cost on the right. */
 @Composable
 private fun ItineraryRow(item: Item) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        KindTile(kind = item.kind, size = 44.dp, modifier = Modifier.padding(end = 12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(item.title, style = MaterialTheme.typography.bodyLarge, color = InkPrimary)
-            item.place?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = InkSecondary)
-            }
+        DuoIconContainer(kind = item.kind, size = 50.dp)
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Text(item.title, style = MaterialTheme.typography.titleSmall, color = InkPrimary)
+            item.place?.let { MetadataChip(it) }
             if (item.detail.isNotBlank()) {
                 Text(
                     item.detail,
                     style = MaterialTheme.typography.bodySmall,
-                    color = InkSecondary
+                    color = InkSecondary,
+                    maxLines = 2
                 )
             }
         }
         Column(
             horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.padding(start = 8.dp)
         ) {
-            Text(
-                item.timeLocal ?: "—",
-                style = MaterialTheme.typography.labelSmall,
-                color = AccentDeep
-            )
+            TimePill(item.timeLocal ?: "—")
             if (item.costLocal != null) {
                 Text(
                     formatLocal(item.costLocal, item.ccy),
