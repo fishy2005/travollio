@@ -64,36 +64,93 @@ object Updater {
     private fun feedUrl(): String =
         "${BuildConfig.GH_API_BASE}/repos/${BuildConfig.GH_OWNER}/${BuildConfig.GH_REPO}/releases/latest"
 
-    /** Fetch the latest published release. Distinguishes "current" from "unreachable". */
+    /** Fetch the latest published release. Distinguishes "current" from "unreachable".
+     *
+     *  The GitHub API is rich but rate-limited (60 req/hr per IP — and mobile/CGNAT IPs
+     *  are shared, so unauthenticated calls routinely hit HTTP 403). We therefore fall
+     *  back to the GitHub **web** "latest" redirect (`github.com/...releases/latest`,
+     *  NOT api.github.com) when the API fails, so a rate-limit never hides an update. */
     suspend fun check(): CheckResult = withContext(Dispatchers.IO) {
-        val conn = try {
-            (URL(feedUrl()).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15_000
-                readTimeout = 15_000
-                setRequestProperty("Accept", "application/vnd.github+json")
-                setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
-                setRequestProperty("User-Agent", "Travollio")
+        var apiFailed = false
+        val apiInfo = try {
+            fetchFromApi()
+        } catch (e: Exception) {
+            apiFailed = true
+            null
+        }
+        if (apiInfo != null) {
+            if (apiInfo.versionCode > currentVersionCode) CheckResult.Newer(apiInfo)
+            else CheckResult.Current(apiInfo)
+        } else {
+            val webInfo = runCatching { fetchFromWebRedirect() }.getOrNull()
+            when {
+                webInfo != null && webInfo.versionCode > currentVersionCode -> CheckResult.Newer(webInfo)
+                webInfo != null -> CheckResult.Current(webInfo)
+                apiFailed -> CheckResult.Unreachable("Couldn't reach the update feed — check your connection and try again.")
+                else -> CheckResult.UpToDate
+            }
+        }
+    }
+
+    /** Query the GitHub Releases API. Returns null on 404 (no release published yet);
+     *  throws on any other non-success (rate limit 403, server 5xx, ...). */
+    private fun fetchFromApi(): UpdateInfo? {
+        val conn = (URL(feedUrl()).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 15_000
+            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+            setRequestProperty("User-Agent", "Travollio")
+        }
+        try {
+            return when (conn.responseCode) {
+                200 -> parseRelease(conn.inputStream.bufferedReader().use { it.readText() })
+                404 -> null
+                else -> error("GitHub returned HTTP ${conn.responseCode}")
             }
         } catch (e: Exception) {
-            return@withContext CheckResult.Unreachable(e.message)
+            conn.disconnect()
+            throw e
+        }
+    }
+
+    /** Follow the `github.com/{owner}/{repo}/releases/latest` redirect to the newest
+     *  release tag. The web host isn't subject to api.github.com's rate limit, so this
+     *  keeps the update discoverable even when the API is temporarily exhausted. */
+    private fun fetchFromWebRedirect(): UpdateInfo? {
+        val base = BuildConfig.GH_API_BASE.replace("api.github.com", "github.com").trimEnd('/')
+        val conn = (URL("$base/${BuildConfig.GH_OWNER}/${BuildConfig.GH_REPO}/releases/latest").openConnection() as HttpURLConnection).apply {
+            instanceFollowRedirects = false
+            connectTimeout = 15_000
+            readTimeout = 15_000
+            setRequestProperty("User-Agent", "Travollio")
+            setRequestProperty("Accept", "text/html")
         }
         try {
             val code = conn.responseCode
-            if (code != 200) {
-                // 404 → no release published yet: treat as "nothing newer", not an error.
-                return@withContext CheckResult.UpToDate
-            }
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
-            val info = parseRelease(body) ?: return@withContext CheckResult.UpToDate
-            when {
-                info.versionCode > currentVersionCode -> CheckResult.Newer(info)
-                else -> CheckResult.Current(info)
-            }
-        } catch (e: Exception) {
-            CheckResult.Unreachable(e.message)
+            if (code != 301 && code != 302 && code != 303 && code != 307 && code != 308) return null
+            val loc = conn.getHeaderField("Location") ?: return null
+            val tag = extractTag(loc) ?: return null
+            return buildUpdateInfoFromTag(tag)
         } finally {
             conn.disconnect()
         }
+    }
+
+    /** The last "tag/.../...." path segment of a release redirect Location header. */
+    private fun extractTag(loc: String): String? {
+        val idx = loc.lastIndexOf("tag/")
+        if (idx < 0) return null
+        val tag = loc.substring(idx + 4).trim().trimEnd('/')
+        return tag.takeIf { it.isNotBlank() }
+    }
+
+    /** Build an update handle from just a tag (web fallback path) — the APK asset on a
+     *  release is always `Travollio-v{versionName}.apk` (see scripts/release.sh). */
+    private fun buildUpdateInfoFromTag(tag: String): UpdateInfo? {
+        val (code, name) = parseVersion(tag) ?: return null
+        val apkUrl = "https://github.com/${BuildConfig.GH_OWNER}/${BuildConfig.GH_REPO}/releases/download/$tag/Travollio-v${name}.apk"
+        return UpdateInfo(versionCode = code, versionName = name, apkUrl = apkUrl, notes = "", publishedAt = "", mandatory = false)
     }
 
     private fun parseRelease(body: String): UpdateInfo? {
