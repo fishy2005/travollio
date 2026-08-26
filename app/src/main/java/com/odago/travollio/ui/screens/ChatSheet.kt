@@ -1,5 +1,7 @@
 package com.odago.travollio.ui.screens
 
+import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -10,6 +12,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -69,8 +72,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import java.io.File
@@ -82,6 +87,7 @@ import androidx.compose.ui.unit.dp
 import com.odago.travollio.agent.AgentEngine
 import com.odago.travollio.data.AgentConfig
 import com.odago.travollio.data.AppState
+import com.odago.travollio.data.Attachment
 import com.odago.travollio.data.ChatMessage
 import com.odago.travollio.ui.Accent
 import com.odago.travollio.ui.AccentDeep
@@ -186,7 +192,7 @@ fun AssistantScreen(
                 item(key = "welcome") { WelcomeHint() }
             }
             items(state.chat, key = { it.id }) { msg ->
-                ChatBubble(msg = msg, onGoto = onGoto)
+                ChatBubble(msg = msg, attachments = state.attachments, onGoto = onGoto)
             }
             // Live-streaming reply: render the partial text as an assistant bubble as it arrives.
             if (isStreaming) {
@@ -269,7 +275,7 @@ private fun AgentStatusPill() {
  *  in both themes (the user message is no longer dark-text-on-a-dark-accent pill). The user
  *  bubble is told apart by a teal accent ring; the assistant is plain glass. */
 @Composable
-private fun ChatBubble(msg: ChatMessage, onGoto: (String) -> Unit) {
+private fun ChatBubble(msg: ChatMessage, attachments: List<Attachment>, onGoto: (String) -> Unit) {
     val isUser = msg.role == "user"
     val shape = RoundedCornerShape(
         topStart = 18.dp,
@@ -277,6 +283,10 @@ private fun ChatBubble(msg: ChatMessage, onGoto: (String) -> Unit) {
         bottomStart = if (isUser) 18.dp else 6.dp,
         bottomEnd = if (isUser) 6.dp else 18.dp
     )
+    // Resolve sent attachments (from cardJson) against the live attachment store.
+    val attachItems = msg.cardJson?.let { chatAttachmentItems(it) } ?: emptyList()
+    val images = attachItems.mapNotNull { item -> attachments.firstOrNull { it.id == item.id && it.mimeType.startsWith("image/") } }
+    val files = attachItems.filterNot { item -> images.any { it.id == item.id } }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -286,29 +296,44 @@ private fun ChatBubble(msg: ChatMessage, onGoto: (String) -> Unit) {
         border = BorderStroke(1.dp, if (isUser) Accent.copy(alpha = 0.55f) else MaterialTheme.tvColors.glassBorder)
     ) {
         Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-            Text(
-                markdownAnnotated(msg.text),
-                style = MaterialTheme.typography.bodyMedium,
-                color = InkPrimary
-            )
-            // Attachments the user sent with this message (from cardJson)
-            msg.cardJson?.let { json ->
-                attachmentNames(json).forEach { name ->
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                        Icon(
-                            Icons.Filled.AttachFile,
-                            contentDescription = null,
-                            tint = if (isUser) Accent else InkSecondary,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(Modifier.size(4.dp))
-                        Text(
-                            name,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (isUser) Accent else InkSecondary,
-                            maxLines = 1
-                        )
-                    }
+            // When the user only sent images (no caption), the "(attachment)" placeholder
+            // text is meaningless against real thumbnails — hide it and let the images speak.
+            val showText = !(isUser && images.isNotEmpty() && msg.text == "(attachment)")
+            if (showText) {
+                Text(
+                    markdownAnnotated(msg.text),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = InkPrimary
+                )
+            }
+            // Reply-side images render as a scrollable filmstrip; user tappable to open full.
+            if (images.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .padding(top = if (showText) 8.dp else 0.dp)
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    images.forEach { ChatImageThumb(it) }
+                }
+            }
+            // Non-image attachments: a labelled file chip.
+            files.forEach { item ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                    Icon(
+                        Icons.Filled.AttachFile,
+                        contentDescription = null,
+                        tint = if (isUser) Accent else InkSecondary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.size(4.dp))
+                    Text(
+                        item.name,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isUser) Accent else InkSecondary,
+                        maxLines = 1
+                    )
                 }
             }
             // Deep-link button: only on assistant turns that changed something.
@@ -339,6 +364,58 @@ private fun ChatBubble(msg: ChatMessage, onGoto: (String) -> Unit) {
     }
 }
 
+/** 1:1 rounded thumbnail for an image the user sent, sample-downscaled for the list.
+ *  Tapping opens the full-size image via FileProvider. */
+@Composable
+private fun ChatImageThumb(attachment: Attachment) {
+    val ctx = LocalContext.current
+    var bmp by remember(attachment.filePath) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(attachment.filePath) {
+        bmp = runCatching {
+            val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+            BitmapFactory.decodeFile(attachment.filePath, opts)
+        }.getOrNull()
+    }
+    val shape = RoundedCornerShape(14.dp)
+    Box(
+        modifier = Modifier
+            .size(96.dp)
+            .clip(shape)
+            .background(AccentTint)
+            .clickable { openAttachment(ctx, attachment) },
+        contentAlignment = Alignment.Center
+    ) {
+        bmp?.let {
+            Image(
+                bitmap = it.asImageBitmap(),
+                contentDescription = attachment.fileName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } ?: Icon(
+            Icons.Filled.Photo,
+            contentDescription = attachment.fileName,
+            tint = AccentDeep,
+            modifier = Modifier.size(28.dp)
+        )
+    }
+}
+
+/** Open a sent attachment via FileProvider — scoped grant, never world-readable. */
+private fun openAttachment(ctx: android.content.Context, a: Attachment) {
+    try {
+        val file = File(a.filePath)
+        if (!file.exists()) return
+        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", file)
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, a.mimeType)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        ctx.startActivity(Intent.createChooser(intent, a.fileName))
+    } catch (_: Exception) {
+        // no viewer installed / provider issue — swallow, it's a demo convenience
+    }
+}
+
 /** Human label for a deep-link action, or null if it shouldn't render a button. */
 private fun actionLabel(actionJson: String): String? = try {
     val o = org.json.JSONObject(actionJson)
@@ -356,10 +433,17 @@ private fun actionLabel(actionJson: String): String? = try {
     null
 }
 
-/** File names from a chat message's cardJson ([{"id":1,"name":"receipt.jpg"}]). */
-private fun attachmentNames(cardJson: String): List<String> = try {
+/** An attachment reference stored in a chat message's cardJson. */
+private data class ChatAttachmentItem(val id: Long, val name: String)
+
+/** Attachments referenced by a chat message's cardJson ([{"id":1,"name":"receipt.jpg"}]). */
+private fun chatAttachmentItems(cardJson: String): List<ChatAttachmentItem> = try {
     val arr = org.json.JSONArray(cardJson)
-    (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.optString("name") }
+    (0 until arr.length()).mapNotNull { i ->
+        val o = arr.optJSONObject(i) ?: return@mapNotNull null
+        val id = o.optLong("id", -1L)
+        if (id < 0) null else ChatAttachmentItem(id, o.optString("name"))
+    }
 } catch (_: Exception) {
     emptyList()
 }
