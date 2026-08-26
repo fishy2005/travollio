@@ -4,4 +4,6 @@
     <files-path name="attachments" path="attachments/" />
     <!-- Downloaded update APKs live under cacheDir/updates/ -->
     <cache-path name="updates" path="updates/" />
+    <!-- Camera captures are staged in cacheDir/camera/ before the agent imports them -->
+    <cache-path name="camera" path="camera/" />
 </paths>

@@ -41,6 +41,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Photo
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.AlertDialog
@@ -67,6 +70,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -258,7 +265,9 @@ private fun AgentStatusPill() {
     }
 }
 
-/** Chat bubble: baby-blue for the user, dark glass for the assistant. */
+/** Chat bubble: user + assistant both read on the bot's frosted glass so text stays legible
+ *  in both themes (the user message is no longer dark-text-on-a-dark-accent pill). The user
+ *  bubble is told apart by a teal accent ring; the assistant is plain glass. */
 @Composable
 private fun ChatBubble(msg: ChatMessage, onGoto: (String) -> Unit) {
     val isUser = msg.role == "user"
@@ -273,7 +282,8 @@ private fun ChatBubble(msg: ChatMessage, onGoto: (String) -> Unit) {
             .fillMaxWidth()
             .padding(vertical = 2.dp),
         shape = shape,
-        color = if (isUser) Accent else MaterialTheme.tvColors.glassSurface
+        color = MaterialTheme.tvColors.glassSurface,
+        border = BorderStroke(1.dp, if (isUser) Accent.copy(alpha = 0.55f) else MaterialTheme.tvColors.glassBorder)
     ) {
         Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
             Text(
@@ -288,14 +298,14 @@ private fun ChatBubble(msg: ChatMessage, onGoto: (String) -> Unit) {
                         Icon(
                             Icons.Filled.AttachFile,
                             contentDescription = null,
-                            tint = if (isUser) InkPrimary else InkSecondary,
+                            tint = if (isUser) Accent else InkSecondary,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(Modifier.size(4.dp))
                         Text(
                             name,
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (isUser) InkPrimary else InkSecondary,
+                            color = if (isUser) Accent else InkSecondary,
                             maxLines = 1
                         )
                     }
@@ -482,9 +492,28 @@ private fun ThinkingBubble() {
 private fun ChatInput(state: AppState, isThinking: Boolean, onSend: (String, List<Uri>) -> Unit) {
     var text by remember { mutableStateOf("") }
     var pending by remember { mutableStateOf<List<Uri>>(emptyList()) }
-    val pickLauncher = rememberLauncherForActivityResult(
+    var attachOpen by remember { mutableStateOf(false) }
+    val ctx = LocalContext.current
+
+    // Choose the source explicitly (Camera / Gallery / Document) so the right content
+    // type lands in the agent: photos feed the vision path, PDF/Doc get text-extracted.
+    val galleryLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetMultipleContents()
     ) { uris -> if (uris.isNotEmpty()) pending = uris }
+    val docLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetMultipleContents()
+    ) { uris -> if (uris.isNotEmpty()) pending = uris }
+    var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { ok -> if (ok) cameraUri?.let { pending = pending + it }; cameraUri = null }
+    val takePhoto = {
+        val dir = File(ctx.cacheDir, "camera").apply { mkdirs() }
+        val file = File(dir, "cam_${System.currentTimeMillis()}.jpg")
+        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", file)
+        cameraUri = uri
+        cameraLauncher.launch(uri)
+    }
 
     val canSend = (text.isNotBlank() || pending.isNotEmpty()) && !isThinking
 
@@ -565,10 +594,29 @@ private fun ChatInput(state: AppState, isThinking: Boolean, onSend: (String, Lis
             }
         }
 
+        // Attach source picker bubble: choose where the file comes from so the right
+        // content type reaches the agent (photos → vision, PDF/Doc → text extraction).
+        if (attachOpen) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AttachOption("Camera", Icons.Filled.PhotoCamera) { attachOpen = false; takePhoto() }
+                AttachOption("Gallery", Icons.Filled.Photo) { attachOpen = false; galleryLauncher.launch("image/*") }
+                AttachOption("PDF / Doc", Icons.Filled.Description) { attachOpen = false; docLauncher.launch("*/*") }
+            }
+        }
+
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // Attach button
-            IconButton(onClick = { pickLauncher.launch("*/*") }) {
-                Icon(Icons.Filled.AttachFile, contentDescription = "Attach photo or file", tint = InkSecondary)
+            // Attach button — toggles the source picker bubble (camera / gallery / document).
+            IconButton(onClick = { attachOpen = !attachOpen }) {
+                Icon(
+                    if (attachOpen) Icons.Filled.Close else Icons.Filled.AttachFile,
+                    contentDescription = "Attach photo or file",
+                    tint = if (attachOpen) Accent else InkSecondary
+                )
             }
             OutlinedTextField(
                 value = text,
@@ -646,6 +694,28 @@ private fun suggestionChips(state: AppState): List<String> = buildList {
         add("Import a Word itinerary into a new trip")
     }
 }.take(5)
+
+/** One tappable option in the attach-source bubble (camera / gallery / document). */
+@Composable
+private fun AttachOption(label: String, icon: ImageVector, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.tvColors.glassSurface,
+        border = BorderStroke(0.5.dp, Accent.copy(alpha = 0.35f)),
+        modifier = Modifier.pressScale()
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
+        ) {
+            Icon(icon, contentDescription = null, tint = AccentDeep, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.size(5.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, color = InkPrimary)
+        }
+    }
+}
 
 /** Compact pill that just fills the composer when tapped. */
 @Composable

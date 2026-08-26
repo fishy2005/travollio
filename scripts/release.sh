@@ -41,8 +41,8 @@ TOKEN="${GITHUB_TOKEN:-}"
 [ -z "$TOKEN" ] && die "No GITHUB_TOKEN set. Export it or put it in ~/.config/travollio/token"
 
 # Resolve repo identity from env or build.gradle.kts BuildConfig defaults.
-default_owner() { grep -oE 'GH_OWNER", "([^"]+)"' "$BG" | head -1 | sed -E 's/.*"([^"]+)".*/\1/' ; }
-default_repo()  { grep -oE 'GH_REPO", "([^"]+)"'  "$BG" | head -1 | sed -E 's/.*"([^"]+)".*/\1/' ; }
+default_owner() { grep -oE '^github.owner=.*' "$DIR/github.local.properties" 2>/dev/null | head -1 | cut -d= -f2- ; }
+default_repo()  { grep -oE '^github.repo=.*'  "$DIR/github.local.properties" 2>/dev/null | head -1 | cut -d= -f2- ; }
 OWNER="${OWNER:-$(default_owner || true)}"
 REPO="${REPO:-$(default_repo || true)}"
 

@@ -479,8 +479,19 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
             while (e != null) {
                 if (!e.isDirectory && e.name == "word/document.xml") {
                     val raw = zip.bufferedReader().readText()
-                    // paragraph/table ends -> newlines, then strip all tags, collapse whitespace
-                    sb.append(raw.replace("</w:p>", "\n").replace("</w:tr>", "\n"))
+                    // Turn paragraph/table/break boundaries into newlines, then strip every
+                    // <...> tag and decode XML entities so the agent reads plain prose, not
+                    // a wall of OOXML markup.
+                    val cleaned = raw
+                        .replace("</w:p>", "\n")
+                        .replace("</w:tr>", "\n")
+                        .replace("<w:tab/>", "\t")
+                        .replace("<w:br/>", "\n")
+                        .replace(Regex("<[^>]+>"), "")
+                        .replace("&lt;", "<").replace("&gt;", ">")
+                        .replace("&quot;", "\"").replace("&apos;", "'")
+                        .replace("&amp;", "&")
+                    sb.append(cleaned)
                     break
                 }
                 e = zip.nextEntry

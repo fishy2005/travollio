@@ -295,26 +295,33 @@ class GeminiAgent(private val db: AppDatabase) {
 
         var lastError: String? = null
         for (turn in 0 until 6) {
+            // Streaming is only requested for cloud providers: some strict local servers
+            // (e.g. LM Studio) reject `stream:true` together with tool-calling, surfacing a
+            // 400. Non-streaming is the safe path for them, and identical otherwise.
+            val useStream = !AgentConfig.isLocal
             val body = JSONObject()
                 .put("model", AgentConfig.model)
                 .put("messages", messages)
                 .put("tools", tools)
                 .put("tool_choice", "auto")
-                .put("stream", true)
-            var resp = streamPost(body, streamDelta)
+            var resp: JSONObject? = if (useStream) streamPost(body, streamDelta) else postRaw(body)
             if (resp == null) {
                 // A transport-level failure (DNS/refused/connect/timeout) is worth one idempotent
                 // retry — the request likely never reached the server. An HTTP-level failure
-                // (4xx/5xx, e.g. 401 bad key or 429 rate-limit) is telling us something re-sending
-                // won't change, and re-sending a request the server already processed could apply
-                // a mutation twice. So retry only transport errors and break out on HTTP errors.
+                // (4xx/5xx, e.g. 401 bad key or 429 rate-limit) means the request was REJECTED,
+                // so no mutation ran; we can safely retry once WITHOUT streaming in case the
+                // provider refuses the SSE form (local servers).
                 val firstErr = lastHttpError ?: "network error"
-                if (firstErr.startsWith("HTTP")) { lastError = firstErr; break }
-                if (lastError == null) lastError = firstErr
-                resp = streamPost(body, streamDelta)
-                if (resp == null) {
-                    lastError = lastHttpError ?: firstErr
-                    break
+                if (firstErr.startsWith("HTTP")) {
+                    resp = postRaw(body)
+                    if (resp == null) { lastError = lastHttpError ?: firstErr; break }
+                } else {
+                    if (lastError == null) lastError = firstErr
+                    resp = if (useStream) streamPost(body, streamDelta) else postRaw(body)
+                    if (resp == null) {
+                        lastError = lastHttpError ?: firstErr
+                        break
+                    }
                 }
             }
             val msg = resp.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
@@ -1007,6 +1014,8 @@ class GeminiAgent(private val db: AppDatabase) {
      */
     private fun streamPost(body: JSONObject, onDelta: (String) -> Unit): JSONObject? {
         return try {
+            val req = JSONObject(body.toString())
+            req.put("stream", true)
             val conn = URL(chatUrl()).openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
@@ -1017,7 +1026,7 @@ class GeminiAgent(private val db: AppDatabase) {
             conn.connectTimeout = 8_000
             conn.readTimeout = 60_000 // idle-only; a long reply streams in many short reads
             conn.doOutput = true
-            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            conn.outputStream.use { it.write(req.toString().toByteArray()) }
             val code = conn.responseCode
             if (code !in 200..299) {
                 val errText = try {
@@ -1076,6 +1085,37 @@ class GeminiAgent(private val db: AppDatabase) {
                 "choices",
                 JSONArray().put(JSONObject().put("message", message))
             )
+        } catch (e: Exception) {
+            lastHttpError = "${e.javaClass.simpleName}: ${e.message}"
+            null
+        }
+    }
+
+    /** Non-streaming chat-completions POST. Used for local providers and as a safe fallback
+     *  when a server rejects the streaming request. Returns the full response object, or null. */
+    private fun postRaw(body: JSONObject): JSONObject? {
+        return try {
+            val conn = URL(chatUrl()).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            val key = AgentConfig.apiKey
+            if (key.isNotBlank()) conn.setRequestProperty("Authorization", "Bearer $key")
+            conn.connectTimeout = 8_000
+            conn.readTimeout = 30_000
+            conn.doOutput = true
+            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                val errText = try {
+                    conn.errorStream?.bufferedReader()?.use { it.readText() }?.take(200) ?: ""
+                } catch (_: Exception) { "" }
+                lastHttpError = "HTTP $code${if (errText.isNotBlank()) " — $errText" else ""}"
+                android.util.Log.w("TravollioAgent", "Agent API $code: $errText")
+                null
+            } else {
+                lastHttpError = null
+                JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            }
         } catch (e: Exception) {
             lastHttpError = "${e.javaClass.simpleName}: ${e.message}"
             null
