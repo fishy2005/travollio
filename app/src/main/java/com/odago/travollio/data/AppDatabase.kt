@@ -75,9 +75,9 @@ abstract class AppDatabase : RoomDatabase() {
                         // v1 seeded with a buggy raw-SQL INSERT that crashed on launch ("N'EX"
                         // apostrophe broke the literal). v2 fixed the seed; v3 adds the moment
                         // dossier (item place/address/link/confirmation + attachments table).
-                        // Proper migrations are preferred; destructive fallback is a last resort.
+                        // Proper migrations are the only path — a destructive fallback would
+                        // silently wipe the traveller's trips on the next schema bump.
                         .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
-                        .fallbackToDestructiveMigration()
                         .addCallback(object : Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)

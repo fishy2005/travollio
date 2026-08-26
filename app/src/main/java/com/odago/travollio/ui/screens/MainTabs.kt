@@ -60,6 +60,7 @@ fun MainTabs(
     val state by viewModel.state.collectAsState()
     val isThinking by viewModel.isThinking.collectAsState()
     val lastOutcome by viewModel.lastOutcome.collectAsState()
+    val streamingText by viewModel.streamingText.collectAsState()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     // Which itinerary moment's dossier is open (null = none)
     var detailItem by remember { mutableStateOf<Item?>(null) }
@@ -114,11 +115,12 @@ fun MainTabs(
                         onSelectDay = { tripSelectedDay = it },
                         onItemClick = { detailItem = it }
                     )
-                    2 -> MoneyScreen(state = state)
+                    2 -> MoneyScreen(state = state, onAddExpense = viewModel::addExpense)
                     3 -> AssistantScreen(
                         state = state,
                         isThinking = isThinking,
                         lastOutcome = lastOutcome,
+                        streamingText = streamingText,
                         onSend = viewModel::send,
                         onGoto = ::handleGoto,
                         onReset = viewModel::resetConversation
@@ -136,7 +138,8 @@ fun MainTabs(
                     item = item,
                     state = state,
                     onDismiss = { detailItem = null },
-                    onAttach = { target, uris -> viewModel.attachToItem(target.id, uris) }
+                    onAttach = { target, uris -> viewModel.attachToItem(target.id, uris) },
+                    onDelete = { target -> viewModel.deleteItem(target.id); detailItem = null }
                 )
             }
 

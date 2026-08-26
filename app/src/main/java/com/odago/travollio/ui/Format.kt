@@ -1,5 +1,6 @@
 package com.odago.travollio.ui
 
+import com.odago.travollio.data.Currencies
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -32,10 +33,16 @@ fun formatDate(iso: String?): String = try {
     iso.orEmpty()
 }
 
-/** ₪12,345 (home currency, 0 decimals). */
-fun formatHome(amount: Double): String = "₪" + "%,.0f".format(amount)
+/**
+ * Home-currency amount, e.g. "₪12,345" (0 decimals). Symbol follows the trip's
+ * home currency, not a hardcoded shekel. Defaults to ₪ when no code is given.
+ */
+fun formatHome(amount: Double, homeCcy: String? = null): String {
+    val sym = Currencies.symbol(homeCcy)
+    return sym + "%,.0f".format(amount)
+}
 
-/** ¥12,345 (local currency, 0 decimals). */
+/** Local-currency amount, e.g. "¥12,345" / "JPY 12,345" (0 decimals). */
 fun formatLocal(amount: Double?, ccy: String?): String = when {
     amount == null -> ""
     ccy.isNullOrBlank() -> "%,.0f".format(amount)

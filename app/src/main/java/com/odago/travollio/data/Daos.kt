@@ -14,7 +14,7 @@ interface TripDao {
     fun all(): Flow<List<Trip>>
 
     @Query("SELECT * FROM trips ORDER BY id")
-    fun allOnce(): List<Trip>
+    suspend fun allOnce(): List<Trip>
 
     @Query("SELECT * FROM trips WHERE id = :id LIMIT 1")
     suspend fun tripOnce(id: Long): Trip?
@@ -35,7 +35,7 @@ interface DayDao {
     fun daysForTrip(tripId: Long): Flow<List<Day>>
 
     @Query("SELECT * FROM days WHERE tripId = :tripId ORDER BY date")
-    fun daysForTripOnce(tripId: Long): List<Day>
+    suspend fun daysForTripOnce(tripId: Long): List<Day>
 
     @Insert
     suspend fun insertAll(days: List<Day>)
@@ -98,7 +98,7 @@ interface TransactionDao {
     fun forTrip(tripId: Long): Flow<List<Transaction>>
 
     @Query("SELECT * FROM transactions WHERE tripId = :tripId ORDER BY ts DESC, id DESC")
-    fun forTripOnce(tripId: Long): List<Transaction>
+    suspend fun forTripOnce(tripId: Long): List<Transaction>
 
     @Insert
     suspend fun insertAll(list: List<Transaction>)
@@ -113,7 +113,7 @@ interface DocumentDao {
     fun all(): Flow<List<Document>>
 
     @Query("SELECT * FROM documents ORDER BY expiresAt")
-    fun allOnce(): List<Document>
+    suspend fun allOnce(): List<Document>
 
     @Insert
     suspend fun insert(doc: Document)

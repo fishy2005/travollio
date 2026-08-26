@@ -67,6 +67,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.odago.travollio.agent.AgentEngine
 import com.odago.travollio.data.AgentConfig
@@ -94,18 +98,25 @@ fun AssistantScreen(
     state: AppState,
     isThinking: Boolean,
     lastOutcome: String?,
+    streamingText: String,
     onSend: (String, List<Uri>) -> Unit,
     onGoto: (String) -> Unit,
     onReset: () -> Unit
 ) {
     val listState = rememberLazyListState()
     var showResetDialog by remember { mutableStateOf(false) }
+    val isStreaming = streamingText.isNotEmpty()
 
     // Keep the newest message in view: re-anchors when a message lands, when the thinking
     // bubble appears, and when the keyboard opens (IME inset changes shrink the list).
+    // While a reply is streaming we pin to the bottom (no animation — a fresh delta arrives
+    // every few ms, so animating each one would be janky).
     val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
-    LaunchedEffect(state.chat.size, isThinking, imeBottom) {
-        if (state.chat.isNotEmpty()) {
+    LaunchedEffect(state.chat.size, isThinking, imeBottom, isStreaming, streamingText.length) {
+        if (isStreaming) {
+            val target = (state.chat.lastIndex + 1).coerceAtLeast(0)
+            listState.scrollToItem(target)
+        } else if (state.chat.isNotEmpty()) {
             val target = (state.chat.lastIndex + if (isThinking) 1 else 0).coerceAtLeast(0)
             // jump when a big change (keyboard just opened), animate otherwise
             if (imeBottom > 0) listState.scrollToItem(target) else listState.animateScrollToItem(target)
@@ -170,13 +181,16 @@ fun AssistantScreen(
             items(state.chat, key = { it.id }) { msg ->
                 ChatBubble(msg = msg, onGoto = onGoto)
             }
-            if (isThinking) {
+            // Live-streaming reply: render the partial text as an assistant bubble as it arrives.
+            if (isStreaming) {
+                item(key = "streaming") { StreamingBubble(streamingText) }
+            } else if (isThinking) {
                 item(key = "thinking") { ThinkingBubble() }
             }
         }
 
         HorizontalDivider(color = Hairline, thickness = 0.5.dp)
-        ChatInput(state = state, onSend = onSend)
+        ChatInput(state = state, isThinking = isThinking, onSend = onSend)
         Spacer(Modifier.height(10.dp))
     }
 
@@ -263,7 +277,7 @@ private fun ChatBubble(msg: ChatMessage, onGoto: (String) -> Unit) {
     ) {
         Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
             Text(
-                msg.text,
+                markdownAnnotated(msg.text),
                 style = MaterialTheme.typography.bodyMedium,
                 color = InkPrimary
             )
@@ -340,6 +354,101 @@ private fun attachmentNames(cardJson: String): List<String> = try {
     emptyList()
 }
 
+/**
+ * Lightweight chat markdown: renders **bold**, `inline code`, `# / ## / ###`
+ * headings, `- / * / •` bullets and `1.` numbered list lines as plain, readable
+ * text (Compose has no markdown parser out of the box, so this keeps replies
+ * looking tidy without a heavy dependency). Unknown tokens show verbatim.
+ */
+private fun markdownAnnotated(raw: String): AnnotatedString {
+    val builder = AnnotatedString.Builder()
+    val lines = raw.split("\n")
+    lines.forEachIndexed { idx, full ->
+        val line = full.trimEnd()
+        if (line.isBlank()) {
+            builder.append("\n")
+            return@forEachIndexed
+        }
+        var prefix = ""
+        var content = line
+        var isBold = false
+        when {
+            Regex("^#{1,3}\\s+").containsMatchIn(line) -> {
+                content = line.replace(Regex("^#{1,3}\\s+"), "")
+                isBold = true
+            }
+            Regex("^[-*•]\\s+").containsMatchIn(line) -> {
+                prefix = "   •  "
+                content = line.replace(Regex("^[-*•]\\s+"), "")
+            }
+            Regex("^\\d+[.)]\\s+").containsMatchIn(line) -> {
+                val m = Regex("^(\\d+[.)])\\s+").find(line)
+                val num = m?.groupValues?.get(1) ?: ""
+                prefix = "$num  "
+                content = line.replace(Regex("^\\d+[.)]\\s+"), "")
+            }
+        }
+        appendInline(builder, prefix, false)
+        appendInline(builder, content, isBold)
+        if (idx < lines.lastIndex) builder.append("\n")
+    }
+    return builder.toAnnotatedString()
+}
+
+/** Append text, applying **bold** / `code` spans within it. */
+private fun appendInline(builder: AnnotatedString.Builder, text: String, forceBold: Boolean) {
+    if (text.isBlank()) { builder.append(text); return }
+    var last = 0
+    val regex = Regex("(\\*\\*[^*]+\\*\\*|`[^`]+`)")
+    for (m in regex.findAll(text)) {
+        if (m.range.first > last) builder.append(text.substring(last, m.range.first))
+        val token = m.value
+        when {
+            token.startsWith("**") && token.endsWith("**") -> builder.withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(token.substring(2, token.length - 2)) }
+            token.startsWith("`") && token.endsWith("`") -> builder.withStyle(SpanStyle(background = Color(0x22000000))) { append(token.substring(1, token.length - 1)) }
+            else -> builder.append(token)
+        }
+        last = m.range.last + 1
+    }
+    if (last < text.length) builder.append(text.substring(last))
+}
+
+/** Live partial assistant reply, rendered as an assistant-styled bubble with a soft
+ *  "typing" caret so the user sees the reply forming in real time. */
+@Composable
+private fun StreamingBubble(text: String) {
+    val caretAlpha by rememberInfiniteTransition(label = "streamCaret").animateFloat(
+        initialValue = 0.2f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(animation = tween(durationMillis = 700), repeatMode = RepeatMode.Reverse),
+        label = "streamCaretAlpha"
+    )
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        shape = RoundedCornerShape(
+            topStart = 18.dp, topEnd = 18.dp,
+            bottomStart = 6.dp, bottomEnd = 18.dp
+        ),
+        color = MaterialTheme.tvColors.glassSurface
+    ) {
+        Row(
+            verticalAlignment = Alignment.Bottom,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Box(Modifier.weight(1f)) {
+                Text(
+                    markdownAnnotated(text),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = InkPrimary
+                )
+            }
+            Text("›", color = Accent.copy(alpha = caretAlpha), style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
 /** "…" thinking bubble with three staggered-pulse dots (spring-free — pure alpha pulse). */
 @Composable
 private fun ThinkingBubble() {
@@ -370,14 +479,14 @@ private fun ThinkingBubble() {
 }
 
 @Composable
-private fun ChatInput(state: AppState, onSend: (String, List<Uri>) -> Unit) {
+private fun ChatInput(state: AppState, isThinking: Boolean, onSend: (String, List<Uri>) -> Unit) {
     var text by remember { mutableStateOf("") }
     var pending by remember { mutableStateOf<List<Uri>>(emptyList()) }
     val pickLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetMultipleContents()
     ) { uris -> if (uris.isNotEmpty()) pending = uris }
 
-    val canSend = text.isNotBlank() || pending.isNotEmpty()
+    val canSend = (text.isNotBlank() || pending.isNotEmpty()) && !isThinking
 
     Column(modifier = Modifier.padding(horizontal = 12.dp)) {
         // Context-aware quick suggestions — tap to drop into the field (edit, then send —

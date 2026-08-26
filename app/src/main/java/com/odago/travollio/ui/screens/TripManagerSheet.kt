@@ -177,10 +177,13 @@ private fun TripFormDialog(initial: Trip, isNew: Boolean, onDismiss: () -> Unit,
     var local by remember { mutableStateOf(Currencies.byCode(initial.localCcy)) }
     var dateError by remember { mutableStateOf(false) }
 
-    fun validDates(): Boolean {
+    fun validInput(): Boolean {
         val s = runCatching { LocalDate.parse(start) }.getOrNull()
         val e = runCatching { LocalDate.parse(end) }.getOrNull()
-        return s == null || e == null || !e.isBefore(s)
+        // A new trip must have a name and full, ordered dates; editing may leave them blank to keep current.
+        val datesOk = if (isNew) s != null && e != null && !e.isBefore(s) else (s == null || e == null || !e.isBefore(s))
+        val nameOk = !isNew || name.trim().isNotBlank()
+        return nameOk && datesOk
     }
 
     AlertDialog(
@@ -196,7 +199,7 @@ private fun TripFormDialog(initial: Trip, isNew: Boolean, onDismiss: () -> Unit,
                 Spacer(Modifier.size(10.dp))
                 TripDateField("End date", end) { end = it }
                 if (dateError) Text(
-                    "End date can't be before the start date.",
+                    "Enter a trip name and valid dates (end on or after start).",
                     color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(Modifier.size(10.dp))
@@ -214,7 +217,7 @@ private fun TripFormDialog(initial: Trip, isNew: Boolean, onDismiss: () -> Unit,
         },
         confirmButton = {
             TextButton(onClick = {
-                if (!validDates()) { dateError = true; return@TextButton }
+                if (!validInput()) { dateError = true; return@TextButton }
                 dateError = false
                 val trip = initial.copy(
                     name = name.trim().ifBlank { initial.name },

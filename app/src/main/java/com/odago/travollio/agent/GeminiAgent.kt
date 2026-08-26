@@ -7,6 +7,7 @@ import com.odago.travollio.data.ChatMessage
 import com.odago.travollio.data.Day
 import com.odago.travollio.data.Document
 import com.odago.travollio.data.Item
+import com.odago.travollio.data.MAX_DOC_TEXT
 import com.odago.travollio.data.Transaction
 import com.odago.travollio.data.Trip
 import kotlinx.coroutines.Dispatchers
@@ -165,10 +166,11 @@ class GeminiAgent(private val db: AppDatabase) {
             JSONObject().put("type", "object").put("properties", JSONObject()
                 .put("date", JSONObject().put("type", "string").put("description", "yyyy-MM-dd"))
                 .put("city", JSONObject().put("type", "string")))))
-        put(toolDecl("day_update", "Change a day's date or city. Pass the 'day' (1-based) or existing 'date' plus the fields to change.",
+        put(toolDecl("day_update", "Change a day's date or city. Target it with the 'day' (1-based, from itinerary_get) or existing 'date'; pass 'newDate' (yyyy-MM-dd) to move it to a different date, or 'city' to rename it.",
             JSONObject().put("type", "object").put("properties", JSONObject()
                 .put("day", JSONObject().put("type", "integer").put("description", "1-based day index"))
-                .put("date", JSONObject().put("type", "string").put("description", "existing date to target, or new yyyy-MM-dd"))
+                .put("date", JSONObject().put("type", "string").put("description", "existing date to target (yyyy-MM-dd)"))
+                .put("newDate", JSONObject().put("type", "string").put("description", "the new date to set (yyyy-MM-dd), optional"))
                 .put("city", JSONObject().put("type", "string")))))
         put(toolDecl("day_remove", "Remove a day from the trip (and its items). Pass the 'day' (1-based) or 'date'. Set confirm:true only after the user agrees.",
             JSONObject().put("type", "object").put("properties", JSONObject()
@@ -246,11 +248,16 @@ class GeminiAgent(private val db: AppDatabase) {
      * Run the DeepSeek tool-calling loop. Returns the assistant's final text (plus a deep-link
      * action when a change was made), or throws [CloudException] on any cloud failure
      * (network/HTTP/timeout) so the caller can fall back to the local engine and report why.
+     *
+     * When [streamDelta] is supplied, the answer text is pushed through it token-by-token as it
+     * is produced (OpenAI-style SSE), so the UI can render it live instead of waiting. Tool-call
+     * turns stream no content, but final-answer turns stream the whole reply.
      */
     suspend fun respond(
         history: List<ChatMessage>,
         userText: String,
-        attachments: List<com.odago.travollio.data.AttachmentMeta> = emptyList()
+        attachments: List<com.odago.travollio.data.AttachmentMeta> = emptyList(),
+        streamDelta: (String) -> Unit = {}
     ): AgentResult = withContext(Dispatchers.IO) {
         lastActionJson = null
         val messages = JSONArray()
@@ -262,10 +269,29 @@ class GeminiAgent(private val db: AppDatabase) {
         }
         val names = attachments.joinToString(", ") { "${it.name} (${it.mime})" }
         val docTexts = attachments.filter { !it.text.isNullOrBlank() }
-            .joinToString("\n\n") { d -> "[Document content — ${d.name}]\n${d.text!!.take(8000)}" }
+            .joinToString("\n\n") { d -> "[Document content — ${d.name}]\n${d.text!!.take(MAX_DOC_TEXT)}" }
         val attachNote = if (attachments.isEmpty()) "" else
             "\n\n[Attachments: $names]\n\n$docTexts"
-        messages.put(JSONObject().put("role", "user").put("content", userText + attachNote))
+        // When vision is enabled and image attachments are present, send them as OpenAI
+        // content parts (base64 data URI) so a vision-capable local/cloud model can read them.
+        val images = if (AgentConfig.vision) attachments.filter { it.mime.startsWith("image/") } else emptyList()
+        val userMessage = JSONObject().put("role", "user")
+        if (images.isEmpty()) {
+            userMessage.put("content", userText + attachNote)
+        } else {
+            val parts = JSONArray()
+            parts.put(JSONObject().put("type", "text").put("text", userText + attachNote))
+            images.forEach { m ->
+                val bytes = runCatching { java.io.File(m.path).readBytes() }.getOrNull()
+                if (bytes != null && bytes.size <= 2_000_000) {
+                    val b64 = java.util.Base64.getEncoder().encodeToString(bytes)
+                    parts.put(JSONObject().put("type", "image_url")
+                        .put("image_url", JSONObject().put("url", "data:${m.mime};base64,$b64")))
+                }
+            }
+            userMessage.put("content", parts)
+        }
+        messages.put(userMessage)
 
         var lastError: String? = null
         for (turn in 0 until 6) {
@@ -274,7 +300,8 @@ class GeminiAgent(private val db: AppDatabase) {
                 .put("messages", messages)
                 .put("tools", tools)
                 .put("tool_choice", "auto")
-            var resp = post(body)
+                .put("stream", true)
+            var resp = streamPost(body, streamDelta)
             if (resp == null) {
                 // A transport-level failure (DNS/refused/connect/timeout) is worth one idempotent
                 // retry — the request likely never reached the server. An HTTP-level failure
@@ -284,7 +311,7 @@ class GeminiAgent(private val db: AppDatabase) {
                 val firstErr = lastHttpError ?: "network error"
                 if (firstErr.startsWith("HTTP")) { lastError = firstErr; break }
                 if (lastError == null) lastError = firstErr
-                resp = post(body)
+                resp = streamPost(body, streamDelta)
                 if (resp == null) {
                     lastError = lastHttpError ?: firstErr
                     break
@@ -529,17 +556,13 @@ class GeminiAgent(private val db: AppDatabase) {
         if (amount.isNaN()) return JSONObject().put("error", "missing amount")
         val from = args.optString("from", "").uppercase()
         val to = args.optString("to", "").uppercase()
-        val perIls: Double? = when {
-            from == "JPY" && to == "ILS" -> 0.0256
-            from == "ILS" && to == "JPY" -> 1.0 / 0.0256
-            else -> null
-        }
+        val perIls: Double? = rateToHome(from, to)
         return if (perIls != null) {
             JSONObject().put("amount", amount).put("from", from).put("to", to)
                 .put("result", amount * perIls)
                 .put("rateNote", "last known cached rate (offline)")
         } else {
-            JSONObject().put("error", "no cached rate for $from→$to; I can convert JPY↔ILS offline")
+            JSONObject().put("error", "no cached rate for $from→$to; I convert between ILS, USD, EUR, GBP, JPY, THB and more offline")
         }
     }
 
@@ -616,10 +639,19 @@ class GeminiAgent(private val db: AppDatabase) {
 
     private suspend fun tripUpdate(args: JSONObject): JSONObject {
         val trip = db.activeTrip() ?: return JSONObject().put("error", "no active trip")
+        val startDate = args.optString("startDate", trip.startDate).trim().ifBlank { trip.startDate }
+        val endDate = args.optString("endDate", trip.endDate).trim().ifBlank { trip.endDate }
+        // Reject invalid date strings and reversed range rather than storing garbage that
+        // later crashes LocalDate.parse in the budget/today logic.
+        val s = runCatching { java.time.LocalDate.parse(startDate) }.getOrNull()
+            ?: return JSONObject().put("error", "startDate '$startDate' is not a valid yyyy-MM-dd date")
+        val e = runCatching { java.time.LocalDate.parse(endDate) }.getOrNull()
+            ?: return JSONObject().put("error", "endDate '$endDate' is not a valid yyyy-MM-dd date")
+        if (e.isBefore(s)) return JSONObject().put("error", "endDate can't be before startDate")
         val updated = trip.copy(
             name = args.optString("name", trip.name).trim().ifBlank { trip.name },
-            startDate = args.optString("startDate", trip.startDate).trim().ifBlank { trip.startDate },
-            endDate = args.optString("endDate", trip.endDate).trim().ifBlank { trip.endDate },
+            startDate = startDate,
+            endDate = endDate,
             baseCity = args.optString("baseCity", trip.baseCity).trim().ifBlank { trip.baseCity },
             budgetCapHomeCcy = if (args.has("budgetCapHomeCcy")) args.optDouble("budgetCapHomeCcy", trip.budgetCapHomeCcy) else trip.budgetCapHomeCcy,
             homeCcy = args.optString("homeCcy", trip.homeCcy).trim().ifBlank { trip.homeCcy },
@@ -731,10 +763,19 @@ class GeminiAgent(private val db: AppDatabase) {
         val trip = db.activeTrip() ?: return JSONObject().put("error", "no active trip")
         val days = db.dayDao().daysForTripOnce(trip.id)
         val target = resolveDay(days, args) ?: return JSONObject().put("error", "could not resolve the day; use itinerary_get for valid day indices/dates")
-        val code = args.optString("date", target.date).trim()
+        val newDate = args.optString("newDate", "").trim()
         val city = args.optString("city", target.city).trim()
-        if (target.date == code && target.city == city) return JSONObject().put("error", "nothing to change")
-        db.dayDao().update(target.copy(date = code.ifBlank { target.date }, city = city.ifBlank { target.city }))
+        val date = newDate.ifBlank { target.date }
+        // Validate: a new date must be real ISO and not collide with an existing day.
+        if (newDate.isNotBlank()) {
+            val parsed = runCatching { java.time.LocalDate.parse(newDate) }.getOrNull()
+                ?: return JSONObject().put("error", "newDate '$newDate' is not a valid yyyy-MM-dd date")
+            if (days.any { it.date == newDate && it.id != target.id }) {
+                return JSONObject().put("error", "a day already exists on $newDate")
+            }
+        }
+        if (target.date == date && target.city == city) return JSONObject().put("error", "nothing to change")
+        db.dayDao().update(target.copy(date = date, city = city.ifBlank { target.city }))
         val idx = days.indexOf(target) + 1
         lastActionJson = JSONObject().put("type", "day").put("day", idx).toString()
         return JSONObject().put("ok", true).put("message", "Updated Day $idx.")
@@ -916,11 +957,25 @@ class GeminiAgent(private val db: AppDatabase) {
             .put("message", "Imported $addedItems items${if (addedDays > 0) " across $addedDays new days" else ""} into '${trip.name}'.")
     }
 
-    private fun rateToHome(fromCcy: String, homeCcy: String): Double? = when {        fromCcy == homeCcy -> 1.0
-        fromCcy == "JPY" && homeCcy == "ILS" -> 0.0256
-        fromCcy == "ILS" && homeCcy == "JPY" -> 1.0 / 0.0256
-        else -> null
+    private fun rateToHome(fromCcy: String, homeCcy: String): Double? {
+        val f = fromCcy.uppercase()
+        val h = homeCcy.uppercase()
+        if (f == h) return 1.0
+        val fr = toIls[f] ?: return null
+        val hr = toIls[h] ?: return null
+        return fr / hr
     }
+
+    /** Approximate offline rates: 1 unit of currency = X ILS. Covers the trip's common currencies. */
+    private val toIls: Map<String, Double> = mapOf(
+        "ILS" to 1.0, "USD" to 3.73, "EUR" to 4.02, "GBP" to 4.66, "CHF" to 4.16,
+        "JPY" to 0.0256, "KRW" to 0.0027, "CNY" to 0.516, "THB" to 0.104, "TWD" to 0.114,
+        "VND" to 0.00015, "MYR" to 0.80, "SGD" to 2.76, "HKD" to 0.477, "AUD" to 2.45,
+        "CAD" to 2.72, "NZD" to 2.22, "AED" to 1.015, "SAR" to 0.994, "QAR" to 1.02,
+        "INR" to 0.0447, "IDR" to 0.00024, "PHP" to 0.064, "MXN" to 0.196, "BRL" to 0.68,
+        "TRY" to 0.11, "PLN" to 0.94, "CZK" to 0.16, "HUF" to 0.010, "SEK" to 0.36,
+        "NOK" to 0.36, "DKK" to 0.54, "ZAR" to 0.20, "EGP" to 0.12, "MAD" to 0.38,
+    )
 
     private fun guessTxCategory(note: String): String {
         val t = note.lowercase()
@@ -944,15 +999,23 @@ class GeminiAgent(private val db: AppDatabase) {
         ""
     }
 
-    private fun post(body: JSONObject): JSONObject? {
+    /**
+     * Streaming variant of [post] (OpenAI SSE). Same request, but with `stream:true` the
+     * server sends `data:` chunks; we parse each, push content through [onDelta] as it arrives,
+     * and accumulate `tool_calls` deltas (which may be split across many chunks) before returning
+     * a message object shaped exactly like [post]'s (so the caller's parsing is unchanged).
+     */
+    private fun streamPost(body: JSONObject, onDelta: (String) -> Unit): JSONObject? {
         return try {
             val conn = URL(chatUrl()).openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("Accept", "text/event-stream")
+            conn.setRequestProperty("Cache-Control", "no-cache")
             val key = AgentConfig.apiKey
             if (key.isNotBlank()) conn.setRequestProperty("Authorization", "Bearer $key")
             conn.connectTimeout = 8_000
-            conn.readTimeout = 30_000
+            conn.readTimeout = 60_000 // idle-only; a long reply streams in many short reads
             conn.doOutput = true
             conn.outputStream.use { it.write(body.toString().toByteArray()) }
             val code = conn.responseCode
@@ -962,11 +1025,57 @@ class GeminiAgent(private val db: AppDatabase) {
                 } catch (_: Exception) { "" }
                 lastHttpError = "HTTP $code${if (errText.isNotBlank()) " — $errText" else ""}"
                 android.util.Log.w("TravollioAgent", "Agent API $code: $errText")
-                null
-            } else {
-                lastHttpError = null
-                JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                return null
             }
+            lastHttpError = null
+            val text = StringBuilder()
+            val toolCalls = HashMap<Int, JSONObject>()
+            var sawToolCall = false
+            conn.inputStream.bufferedReader().use { reader ->
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    if (line.isEmpty()) continue
+                    if (!line.startsWith("data:")) continue
+                    val data = line.removePrefix("data:").trim()
+                    if (data == "[DONE]") break
+                    val event = try { JSONObject(data) } catch (_: Exception) { continue }
+                    val delta = event.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")
+                        ?: continue
+                    val piece = delta.optString("content", "")
+                    if (piece.isNotEmpty()) {
+                        onDelta(piece)
+                        text.append(piece)
+                    }
+                    val tcArr = delta.optJSONArray("tool_calls")
+                    if (tcArr != null && tcArr.length() > 0) {
+                        sawToolCall = true
+                        for (i in 0 until tcArr.length()) {
+                            val tc = tcArr.optJSONObject(i) ?: continue
+                            val idx = tc.optInt("index", -1)
+                            if (idx < 0) continue
+                            val acc = toolCalls.getOrPut(idx) { JSONObject() }
+                            tc.optString("id", "").takeIf { it.isNotEmpty() }?.let { acc.put("id", it) }
+                            val fn = tc.optJSONObject("function") ?: continue
+                            val accFn = acc.optJSONObject("function") ?: JSONObject().also { acc.put("function", it) }
+                            fn.optString("name", "").takeIf { it.isNotEmpty() }?.let { accFn.put("name", it) }
+                            val args = fn.optString("arguments", "")
+                            if (args.isNotEmpty()) accFn.put("arguments", accFn.optString("arguments", "") + args)
+                        }
+                    }
+                }
+            }
+            // Reassemble a response object shaped like post() so the loop parses it identically.
+            val message = JSONObject().put("role", "assistant")
+            if (text.isNotEmpty()) message.put("content", text.toString())
+            if (sawToolCall) {
+                val arr = JSONArray()
+                toolCalls.values.sortedBy { it.optInt("index", 0) }.forEach { arr.put(it) }
+                message.put("tool_calls", arr)
+            }
+            JSONObject().put(
+                "choices",
+                JSONArray().put(JSONObject().put("message", message))
+            )
         } catch (e: Exception) {
             lastHttpError = "${e.javaClass.simpleName}: ${e.message}"
             null

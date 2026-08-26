@@ -66,8 +66,8 @@ android {
         applicationId = "com.odago.travollio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.3.4"
+        versionCode = 7
+        versionName = "0.3.5"
 
         // In-app updater feed (settings tab). HTTPS-only; see Updater.kt.
         buildConfigField("String", "GH_API_BASE", "\"$ghApiBase\"")
@@ -133,4 +133,7 @@ dependencies {
 
     implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+
+    // On-device PDF text extraction for the agent's itinerary import (no permissions needed).
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 }

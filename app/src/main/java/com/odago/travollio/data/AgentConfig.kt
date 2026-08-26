@@ -48,6 +48,7 @@ object AgentConfig {
     @Volatile var baseUrl: String = BuildConfig.DEEPSEEK_BASE_URL
     @Volatile var apiKey: String = BuildConfig.DEEPSEEK_API_KEY
     @Volatile var model: String = BuildConfig.DEEPSEEK_MODEL
+    @Volatile var vision: Boolean = false
 
     /** Restore the persisted config (falls back to the baked defaults). Call once at startup. */
     fun load(context: Context) {
@@ -56,10 +57,11 @@ object AgentConfig {
         baseUrl = if (p.baseUrl.isNotBlank()) p.baseUrl else p.provider.baseUrl.ifBlank { BuildConfig.DEEPSEEK_BASE_URL }
         apiKey = p.apiKey.ifBlank { BuildConfig.DEEPSEEK_API_KEY }
         model = p.model.ifBlank { p.provider.defaultModel.ifBlank { BuildConfig.DEEPSEEK_MODEL } }
+        vision = p.vision
     }
 
     fun save(context: Context) {
-        SettingsPrefs.setAgent(context, provider, baseUrl, apiKey, model)
+        SettingsPrefs.setAgent(context, provider, baseUrl, apiKey, model, vision)
     }
 
     /** Reset to the build-time baked connection (DeepSeek). */
@@ -68,7 +70,8 @@ object AgentConfig {
         baseUrl = BuildConfig.DEEPSEEK_BASE_URL
         apiKey = BuildConfig.DEEPSEEK_API_KEY
         model = BuildConfig.DEEPSEEK_MODEL
-        SettingsPrefs.setAgent(context, provider, baseUrl, apiKey, model)
+        vision = false
+        SettingsPrefs.setAgent(context, provider, baseUrl, apiKey, model, vision)
     }
 
     /** Ready to talk if it needs a key and has one, or is a local key-less provider. */

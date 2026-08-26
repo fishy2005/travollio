@@ -375,6 +375,7 @@ private fun AiSettingsCard() {
     var baseUrl by remember { mutableStateOf(AgentConfig.baseUrl) }
     var apiKey by remember { mutableStateOf(AgentConfig.apiKey) }
     var model by remember { mutableStateOf(AgentConfig.model) }
+    var vision by remember { mutableStateOf(AgentConfig.vision) }
     var showProvider by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
@@ -395,6 +396,7 @@ private fun AiSettingsCard() {
         AgentConfig.baseUrl = baseUrl
         AgentConfig.apiKey = apiKey
         AgentConfig.model = model
+        AgentConfig.vision = vision
         AgentConfig.save(context)
         saved = true
         testResult = null
@@ -448,6 +450,33 @@ private fun AiSettingsCard() {
                 visualTransformation = if (apiKey.isEmpty()) VisualTransformation.None else PasswordVisualTransformation()
             )
 
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Send images (vision)", style = MaterialTheme.typography.bodyMedium, color = InkPrimary)
+                    Text(
+                        "Needs a vision-capable model (e.g. a VL variant).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = InkSecondary
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(
+                    checked = vision,
+                    onCheckedChange = { vision = it; saved = false },
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = Accent,
+                        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                        uncheckedThumbColor = InkSecondary,
+                        uncheckedTrackColor = MaterialTheme.tvColors.hairline,
+                        uncheckedBorderColor = MaterialTheme.tvColors.hairline
+                    )
+                )
+            }
+
             if (provider.isLocal) {
                 Text(
                     "Local model — set the Base URL to this computer's LAN address, e.g. http://192.168.1.5:1234/v1",
@@ -468,7 +497,7 @@ private fun AiSettingsCard() {
                     enabled = !testing
                 ) { Text(if (testing) "Testing…" else "Test connection", color = AccentDeep) }
                 if (!provider.needsApiKey) {
-                    TextButton(onClick = { AgentConfig.reset(context); provider = AgentConfig.provider; baseUrl = AgentConfig.baseUrl; apiKey = AgentConfig.apiKey; model = AgentConfig.model; saved = true; testResult = null }) {
+                    TextButton(onClick = { AgentConfig.reset(context); provider = AgentConfig.provider; baseUrl = AgentConfig.baseUrl; apiKey = AgentConfig.apiKey; model = AgentConfig.model; vision = AgentConfig.vision; saved = true; testResult = null }) {
                         Text("Reset", color = InkSecondary)
                     }
                 }

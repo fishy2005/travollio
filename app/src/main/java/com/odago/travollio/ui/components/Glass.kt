@@ -2,6 +2,7 @@ package com.odago.travollio.ui.components
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
@@ -172,21 +174,39 @@ fun KindTile(kind: String, modifier: Modifier = Modifier, size: Dp = 44.dp) {
     }
 }
 
-/** AI-generated daily summary / note card (written by the agent's day.note tool). */
+/** AI-generated daily summary / note card (written by the agent's day.note tool).
+ *  Rendered as a teal-gradient "hero" so the AI's presence reads as a first-class,
+ *  branded surface rather than a plain tinted box. */
 @Composable
 fun AiSummaryCard(text: String, modifier: Modifier = Modifier) {
     Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = Accent.copy(alpha = 0.08f),
-        border = BorderStroke(0.5.dp, Accent.copy(alpha = 0.30f)),
-        modifier = modifier.fillMaxWidth()
+        shape = RoundedCornerShape(20.dp),
+        color = Color.Transparent,
+        modifier = modifier
+            .fillMaxWidth()
+            .shadow(elevation = 10.dp, shape = RoundedCornerShape(20.dp), ambientColor = SoftShadowA, spotColor = SoftShadowB)
     ) {
-        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
-            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = AccentDeep, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.size(10.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("AI SUMMARY", style = MaterialTheme.typography.labelSmall, color = AccentDeep)
-                Text(text, style = MaterialTheme.typography.bodyMedium, color = InkPrimary)
+        Box(
+            Modifier
+                .background(Brush.linearGradient(listOf(Color(0xFF2A9A9F), Color(0xFF0F5D62))))
+                .padding(16.dp)
+        ) {
+            Row(verticalAlignment = Alignment.Top) {
+                Icon(
+                    Icons.Filled.AutoAwesome,
+                    contentDescription = null,
+                    tint = Color(0xFFCFF4EE),
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.size(10.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.weight(1f)) {
+                    Text(
+                        "AI SUMMARY",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFBCE9E2)
+                    )
+                    Text(text, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                }
             }
         }
     }

@@ -6,6 +6,10 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+/** Max characters of extracted document text (PDF/Word/TXT) sent to the agent per turn.
+ *  Large enough for a full multi-week itinerary, bounded to protect model context. */
+const val MAX_DOC_TEXT = 20_000
+
 @Entity(tableName = "trips")
 data class Trip(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

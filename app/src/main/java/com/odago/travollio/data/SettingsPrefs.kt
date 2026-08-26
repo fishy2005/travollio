@@ -8,6 +8,7 @@ data class AgentSettings(
     val baseUrl: String,
     val apiKey: String,
     val model: String,
+    val vision: Boolean = false,
 )
 
 /** Tiny persisted setting store for app-level preferences (SharedPreferences). */
@@ -18,6 +19,7 @@ object SettingsPrefs {
     private const val KEY_AGENT_BASEURL = "agent_base_url"
     private const val KEY_AGENT_KEY = "agent_api_key"
     private const val KEY_AGENT_MODEL = "agent_model"
+    private const val KEY_AGENT_VISION = "agent_vision"
 
     fun isDarkTheme(context: Context): Boolean =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -37,17 +39,19 @@ object SettingsPrefs {
             provider = prov,
             baseUrl = p.getString(KEY_AGENT_BASEURL, "") ?: "",
             apiKey = p.getString(KEY_AGENT_KEY, "") ?: "",
-            model = p.getString(KEY_AGENT_MODEL, "") ?: ""
+            model = p.getString(KEY_AGENT_MODEL, "") ?: "",
+            vision = p.getBoolean(KEY_AGENT_VISION, false)
         )
     }
 
-    fun setAgent(context: Context, provider: AgentProvider, baseUrl: String, apiKey: String, model: String) {
+    fun setAgent(context: Context, provider: AgentProvider, baseUrl: String, apiKey: String, model: String, vision: Boolean = false) {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_AGENT_PROVIDER, provider.name)
             .putString(KEY_AGENT_BASEURL, baseUrl)
             .putString(KEY_AGENT_KEY, apiKey)
             .putString(KEY_AGENT_MODEL, model)
+            .putBoolean(KEY_AGENT_VISION, vision)
             .apply()
     }
 }

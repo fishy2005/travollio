@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -30,9 +31,14 @@ import com.odago.travollio.data.AppState
 import com.odago.travollio.data.Item
 import com.odago.travollio.ui.Accent
 import com.odago.travollio.ui.AccentDeep
+import com.odago.travollio.ui.Blush
+import com.odago.travollio.ui.BlushTint
 import com.odago.travollio.ui.Hairline
 import com.odago.travollio.ui.InkPrimary
 import com.odago.travollio.ui.InkSecondary
+import com.odago.travollio.ui.InkTertiary
+import com.odago.travollio.ui.Sage
+import com.odago.travollio.ui.SageTint
 import com.odago.travollio.ui.components.AiSummaryCard
 import com.odago.travollio.ui.components.GlassCard
 import com.odago.travollio.ui.components.KindTile
@@ -48,7 +54,10 @@ import java.time.temporal.ChronoUnit
 @Composable
 fun TodayScreen(state: AppState, onItemClick: (Item) -> Unit, onOpenTrips: () -> Unit) {
     val today = LocalDate.now().toString()
-    val day = state.days.firstOrNull { it.date == today } ?: state.days.firstOrNull()
+    // Show today's day; else the nearest upcoming day; else (trip finished) the last day.
+    val day = state.days.firstOrNull { it.date == today }
+        ?: state.days.filter { it.date > today }.minByOrNull { it.date }
+        ?: state.days.maxByOrNull { it.date }
     val items = if (day != null) state.items.filter { it.dayId == day.id } else emptyList()
     val dayIndex = if (day != null) state.days.indexOf(day) else -1
     val trip = state.trip
@@ -153,7 +162,8 @@ fun TodayScreen(state: AppState, onItemClick: (Item) -> Unit, onOpenTrips: () ->
     }
 }
 
-/** Compact trip-budget card: overline + big warm-cream numerals + thin gold progress bar. */
+/** Compact trip-budget card: overline + big warm-cream numerals + thin teal progress bar,
+ *  with a live pace chip (computed exactly, not a hardcoded string). */
 @Composable
 private fun BudgetCard(state: AppState) {
     val trip = state.trip ?: return
@@ -161,6 +171,7 @@ private fun BudgetCard(state: AppState) {
     if (cap <= 0) return
     val spent = state.spentHomeCcy
     val ratio = (spent / cap).coerceIn(0.0, 1.0)
+    val pace = paceChip(trip, spent, cap)
 
     GlassCard(
         cornerRadius = 22.dp,
@@ -168,9 +179,12 @@ private fun BudgetCard(state: AppState) {
         fill = MaterialTheme.colorScheme.surface
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("TRIP BUDGET", style = MaterialTheme.typography.labelSmall, color = AccentDeep)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("TRIP BUDGET", style = MaterialTheme.typography.labelSmall, color = AccentDeep)
+                PaceChip(label = pace.first, hot = pace.second)
+            }
             Text(
-                "${formatHome(spent)} of ${formatHome(cap)}",
+                "${formatHome(spent, trip.homeCcy)} of ${formatHome(cap, trip.homeCcy)}",
                 style = MaterialTheme.typography.headlineMedium,
                 color = InkPrimary
             )
@@ -193,13 +207,43 @@ private fun BudgetCard(state: AppState) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    "${(ratio * 100).toInt()}% spent",
+                    "${(ratio * 100).toInt()}% spent · ${formatHome(cap - spent, trip.homeCcy)} left",
                     style = MaterialTheme.typography.labelSmall,
                     color = InkSecondary
                 )
-                Text("On pace", style = MaterialTheme.typography.labelSmall, color = InkSecondary)
             }
         }
+    }
+}
+
+/** Trip budget pace: (label, isHot). Mirrors the Money/Today logic so they can't drift. */
+private fun paceChip(trip: com.odago.travollio.data.Trip, spent: Double, cap: Double): Pair<String, Boolean> {
+    if (cap <= 0) return "No cap" to false
+    val start = runCatching { LocalDate.parse(trip.startDate) }.getOrNull() ?: return "" to false
+    val end = runCatching { LocalDate.parse(trip.endDate) }.getOrNull() ?: return "" to false
+    val now = LocalDate.now()
+    if (now.isBefore(start) || now.isAfter(end)) return "" to false
+    val totalDays = ChronoUnit.DAYS.between(start, end).toInt() + 1
+    val elapsed = (ChronoUnit.DAYS.between(start, now).toInt() + 1).coerceAtLeast(1)
+    val projected = spent / (elapsed.toDouble() / totalDays)
+    val hot = projected > cap * 1.05
+    val label = if (hot) "Pacing hot · ≈${formatHome(projected, trip.homeCcy)}" else "On pace · ≈${formatHome(projected, trip.homeCcy)}"
+    return label to hot
+}
+
+@Composable
+private fun PaceChip(label: String, hot: Boolean) {
+    if (label.isBlank()) return
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = if (hot) BlushTint else SageTint
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (hot) Blush else Sage,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+        )
     }
 }
 

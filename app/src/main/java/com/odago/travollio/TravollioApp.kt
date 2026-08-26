@@ -28,6 +28,9 @@ class TravollioApp : Application() {
         installCrashLogger()
         // Restore the user's AI provider/key/model choice (falls back to the baked DeepSeek).
         AgentConfig.load(this)
+        // pdfbox-android needs its resource loader initialised before the first PD
+        // Document is opened; otherwise PDF attachment text extraction silently fails.
+        runCatching { com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(this) }
         scheduleRoutines()
     }
 

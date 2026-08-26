@@ -15,6 +15,9 @@ import com.odago.travollio.data.AppState
 import com.odago.travollio.data.Attachment
 import com.odago.travollio.data.AttachmentMeta
 import com.odago.travollio.data.ChatMessage
+import com.odago.travollio.data.Fx
+import com.odago.travollio.data.MAX_DOC_TEXT
+import com.odago.travollio.data.Transaction
 import com.odago.travollio.data.Trip
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -29,7 +32,6 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -96,6 +98,11 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
     private val _lastOutcome = MutableStateFlow<String?>(null)
     val lastOutcome: StateFlow<String?> = _lastOutcome.asStateFlow()
 
+    /** The reply text flowing in token-by-token while the cloud agent streams (empty when idle).
+     *  Kept out of Room so we don't hammer the DB on every delta; finalized on completion. */
+    private val _streamingText = MutableStateFlow("")
+    val streamingText: StateFlow<String> = _streamingText.asStateFlow()
+
     /**
      * Send a chat turn, optionally with attachments (photos/files the user picked).
      * Attachments are copied into the app-private sandbox first — the agent only ever
@@ -107,6 +114,7 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
         if (_isThinking.value) return // no re-entrant sends while a reply is in flight
         viewModelScope.launch {
             _isThinking.value = true
+            _streamingText.value = ""
             try {
                 val history = state.value.chat
                 val metas = attachmentUris.mapNotNull { importAttachment(it) }
@@ -125,8 +133,12 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
                 var reply: String
                 var actionJson: String? = null
                 try {
-                    // Hard cap on the whole cloud round-trip so the chat can never stall.
-                    val result = withTimeout(20_000) { GeminiAgent(db).respond(history, trimmed, metas) }
+                    // Stream the answer live into streamingText; blocking IO is bounded by the
+                    // connection's connect/read timeouts, so no coroutine timeout (which can't
+                    // cancel a blocking socket read anyway) is needed here.
+                    val result = GeminiAgent(db).respond(history, trimmed, metas) { delta ->
+                        _streamingText.value += delta
+                    }
                     recordOutcome(OUTCOME_OK, "DeepSeek agent reply")
                     actionJson = result.actionJson
                     reply = if (result.text.isNotBlank()) result.text else localFallback(trimmed, null)
@@ -140,6 +152,7 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
                     recordOutcome(OUTCOME_OFFLINE, "agent threw: $ex")
                     reply = localFallback(trimmed, null)
                 }
+                _streamingText.value = ""
                 db.chatMessageDao().insert(
                     ChatMessage(ts = Instant.now().toString(), role = "assistant", text = reply, actionJson = actionJson)
                 )
@@ -158,6 +171,7 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 } catch (_: Exception) {}
             } finally {
+                _streamingText.value = ""
                 _isThinking.value = false
             }
         }
@@ -168,42 +182,87 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
     fun resetConversation() {
         viewModelScope.launch {
             try {
-                db.chatMessageDao().clear()
+                withContext(Dispatchers.IO) { db.chatMessageDao().clear() }
             } catch (_: Exception) {}
             _lastOutcome.value = null
+            _streamingText.value = ""
         }
     }
 
     // ---- Trip management (available from the Today hub, not only via the agent) ----
 
     fun switchTrip(tripId: Long) = viewModelScope.launch {
-        val t = db.tripDao().tripOnce(tripId) ?: return@launch
-        if (t.isArchived) db.tripDao().update(t.copy(isArchived = false))
-        db.setActiveTrip(tripId)
+        withContext(Dispatchers.IO) {
+            val t = db.tripDao().tripOnce(tripId) ?: return@withContext
+            if (t.isArchived) db.tripDao().update(t.copy(isArchived = false))
+            db.setActiveTrip(tripId)
+        }
     }
 
     fun archiveTrip(tripId: Long) = viewModelScope.launch {
-        val t = db.tripDao().tripOnce(tripId) ?: return@launch
-        db.tripDao().update(t.copy(isArchived = true))
-        val next = db.tripDao().allOnce().filter { !it.isArchived }.minByOrNull { it.id }
-        db.setActiveTrip(next?.id)
+        withContext(Dispatchers.IO) {
+            val t = db.tripDao().tripOnce(tripId) ?: return@withContext
+            db.tripDao().update(t.copy(isArchived = true))
+            val next = db.tripDao().allOnce().filter { !it.isArchived }.minByOrNull { it.id }
+            db.setActiveTrip(next?.id)
+        }
     }
 
     fun updateTrip(trip: Trip) = viewModelScope.launch {
-        if (trip.id > 0) db.tripDao().update(trip)
+        withContext(Dispatchers.IO) {
+            if (trip.id > 0) db.tripDao().update(trip)
+        }
     }
 
     fun createTrip(trip: Trip) = viewModelScope.launch {
-        val id = db.tripDao().insert(trip.copy(isArchived = false))
-        db.setActiveTrip(id)
+        withContext(Dispatchers.IO) {
+            val id = db.tripDao().insert(trip.copy(isArchived = false))
+            db.setActiveTrip(id)
+        }
+    }
+
+    /** Manually remove an itinerary moment (the agent can do this via `itinerary_remove`). */
+    fun deleteItem(itemId: Long) = viewModelScope.launch {
+        withContext(Dispatchers.IO) {
+            val item = db.itemDao().itemOnce(itemId) ?: return@withContext
+            db.itemDao().delete(item)
+        }
+    }
+
+    /** Manually log an expense without going through chat — same shape the agent writes.
+     *  Amount is given in the trip's LOCAL currency; we convert to home for the budget. */
+    fun addExpense(amountLocal: Double, ccy: String?, note: String, category: String) {
+        if (amountLocal <= 0) return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val trip = db.activeTrip() ?: return@withContext
+                val localCcy = ccy ?: trip.localCcy
+                val home = Fx.toHome(amountLocal, localCcy, trip.homeCcy)
+                if (home == null) return@withContext // no rate — bail rather than corrupt the budget
+                val ts = java.time.LocalDateTime.now().withNano(0).toString()
+                db.transactionDao().insert(
+                    Transaction(
+                        tripId = trip.id,
+                        ts = ts,
+                        amountHomeCcy = home,
+                        amountLocal = amountLocal,
+                        ccy = localCcy,
+                        category = category.trim().ifBlank { "other" },
+                        note = note.trim().ifBlank { "Expense" }
+                    )
+                )
+            }
+        }
     }
 
     fun deleteTrip(tripId: Long) = viewModelScope.launch {
-        val t = db.tripDao().tripOnce(tripId) ?: return@launch
-        db.documentDao().deleteAll(tripId)
-        db.tripDao().delete(t)
-        val next = db.tripDao().allOnce().filter { !it.isArchived }.minByOrNull { it.id }
-        db.setActiveTrip(next?.id)
+        withContext(Dispatchers.IO) {
+            val t = db.tripDao().tripOnce(tripId) ?: return@withContext
+            db.documentDao().deleteAll(tripId)
+            db.tripDao().delete(t)
+            val next = db.tripDao().allOnce().filter { !it.isArchived }.minByOrNull { it.id }
+            db.setActiveTrip(next?.id)
+        }
     }
 
     /** Grounded local-engine answer used whenever the cloud agent is unavailable. */
@@ -361,7 +420,7 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
                     createdAt = Instant.now().toString()
                 )
             )
-            val text = if (isDocx(mime, name)) extractDocxText(dest) else null
+            val text = extractAttachmentText(dest, mime, name)
             AttachmentMeta(id = id, name = name, mime = mime, path = dest.absolutePath, text = text)
         } catch (_: Exception) {
             null
@@ -372,10 +431,46 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
         mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
             name.substringAfterLast('.', "").equals("docx", ignoreCase = true)
 
+    private fun isPdf(mime: String, name: String): Boolean =
+        mime == "application/pdf" || name.substringAfterLast('.', "").equals("pdf", ignoreCase = true)
+
+    private fun isPlainText(mime: String, name: String): Boolean =
+        mime.startsWith("text/") ||
+            name.substringAfterLast('.', "").lowercase() in setOf("txt", "md", "csv", "log")
+
+    /** Extract readable text from a picked file so the agent can actually read what you attach. */
+    private fun extractAttachmentText(file: File, mime: String, name: String): String? = when {
+        isDocx(mime, name) -> extractDocxText(file)
+        isPdf(mime, name) -> extractPdfText(file)
+        isPlainText(mime, name) -> runCatching { cleanText(file.readText()).take(MAX_DOC_TEXT).ifBlank { null } }.getOrNull()
+        else -> null
+    }
+
+    /**
+     * Extract plain text from a .pdf via pdfbox-android (on-device, no permissions).
+     * Returns up to MAX_DOC_TEXT chars, or null on any failure.
+     */
+    private fun extractPdfText(file: File): String? = try {
+        com.tom_roush.pdfbox.pdmodel.PDDocument.load(file).use { doc ->
+            val raw = com.tom_roush.pdfbox.text.PDFTextStripper().getText(doc)
+            cleanText(raw).take(MAX_DOC_TEXT).ifBlank { null }
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Normalize extracted prose: collapse spaces, tidy blank lines, strip non-break spaces. */
+    private fun cleanText(raw: String): String = raw
+        .replace("\u00a0", " ")
+        .replace(Regex("[\\t ]+"), " ")
+        .replace(Regex("\\r\\n?"), "\n")
+        .replace(Regex("\\n{3,}"), "\n\n")
+        .trim()
+
     /**
      * Extract plain text from a .docx (OOXML) — it's a zip containing word/document.xml.
      * Uses only built-in Android APIs (java.util.zip + XML text stripping), no added dependency.
-     * Returns up to 8000 chars of readable text, or null on any failure.
+     * Returns up to MAX_DOC_TEXT chars of readable text, or null on any failure.
      */
     private fun extractDocxText(file: File): String? = try {
         val sb = StringBuilder()
@@ -391,13 +486,7 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
                 e = zip.nextEntry
             }
         }
-        val text = sb.toString()
-            .replace(Regex("<[^>]+>"), "")
-            .replace(Regex("\\u00a0"), " ")
-            .replace(Regex("[ \\t]+"), " ")
-            .replace(Regex("\\n{3,}"), "\n\n")
-            .trim()
-        text.take(8000).ifBlank { null }
+        cleanText(sb.toString()).take(MAX_DOC_TEXT).ifBlank { null }
     } catch (_: Exception) {
         null
     }

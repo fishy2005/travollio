@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.ConfirmationNumber
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Place
@@ -37,6 +38,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -79,7 +81,8 @@ fun ItemDetailSheet(
     item: Item,
     state: AppState,
     onDismiss: () -> Unit,
-    onAttach: (Item, List<Uri>) -> Unit
+    onAttach: (Item, List<Uri>) -> Unit,
+    onDelete: (Item) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val attachments = state.attachments.filter { it.itemId == item.id }
@@ -202,6 +205,17 @@ fun ItemDetailSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = InkTertiary
             )
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(color = Hairline, thickness = 0.5.dp)
+            Spacer(Modifier.height(8.dp))
+            TextButton(
+                onClick = { onDelete(item) },
+                colors = ButtonDefaults.textButtonColors(contentColor = Accent)
+            ) {
+                Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.size(6.dp))
+                Text("Delete moment")
+            }
         }
     }
 }

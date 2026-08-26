@@ -1,6 +1,7 @@
 package com.odago.travollio.agent
 
 import com.odago.travollio.data.AppState
+import com.odago.travollio.data.Currencies
 import com.odago.travollio.ui.formatDate
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -44,32 +45,36 @@ object AgentEngine {
         val trip = s.trip ?: return "No active trip."
         val cap = trip.budgetCapHomeCcy
         val spent = s.spentHomeCcy
+        val sym = Currencies.symbol(trip.homeCcy)
         val pct = if (cap > 0) spent / cap * 100 else 0.0
         val pace = paceLine(s, cap, spent)
-        return "You've spent ₪${"%,.0f".format(spent)} of your ₪${"%,.0f".format(cap)} cap (${pct.toInt()}%) — ≈ ${"%,.0f".format(s.spentLocal)} ${s.localCcy} local. $pace"
+        return "You've spent $sym${"%,.0f".format(spent)} of your $sym${"%,.0f".format(cap)} cap (${pct.toInt()}%) — ≈ ${"%,.0f".format(s.spentLocal)} ${s.localCcy} local. $pace"
     }
 
     private fun paceLine(s: AppState, cap: Double, spent: Double): String {
         val trip = s.trip ?: return ""
+        val sym = Currencies.symbol(trip.homeCcy)
         val start = LocalDate.parse(trip.startDate)
         val end = LocalDate.parse(trip.endDate)
         val today = LocalDate.now()
         if (today.isBefore(start)) return "Trip hasn't started — nothing to pace yet."
-        if (today.isAfter(end)) return "Trip is over — final spend stands at ₪${"%,.0f".format(spent)}."
+        if (today.isAfter(end)) return "Trip is over — final spend stands at $sym${"%,.0f".format(spent)}."
         val totalDays = ChronoUnit.DAYS.between(start, end).toInt() + 1
         val elapsed = (ChronoUnit.DAYS.between(start, today).toInt() + 1).coerceAtLeast(1)
         val projected = spent / (elapsed.toDouble() / totalDays)
         return if (projected > cap * 1.05) {
-            "Pacing hot — at this rate you'd land ~₪${"%,.0f".format(projected)}. Biggest lever: ${topCategory(s)}."
+            "Pacing hot — at this rate you'd land ~$sym${"%,.0f".format(projected)}. Biggest lever: ${topCategory(s)}."
         } else {
-            "On pace — projected finish ≈ ₪${"%,.0f".format(projected)}."
+            "On pace — projected finish ≈ $sym${"%,.0f".format(projected)}."
         }
     }
 
     private fun topCategory(s: AppState): String {
+        val trip = s.trip ?: return "—"
+        val sym = Currencies.symbol(trip.homeCcy)
         val byCat = s.transactions.groupBy { it.category }.mapValues { e -> e.value.sumOf { it.amountHomeCcy } }
         val (cat, amt) = byCat.maxByOrNull { it.value } ?: return "—"
-        return "$cat (₪${"%,.0f".format(amt)})"
+        return "$cat ($sym${"%,.0f".format(amt)})"
     }
 
     private fun documentsAnswer(s: AppState): String {
