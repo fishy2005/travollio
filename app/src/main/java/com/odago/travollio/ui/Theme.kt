@@ -84,61 +84,6 @@ val CanvasBg = CanvasBgDark
 val SoftShadowA = Color(0x33000000)
 val SoftShadowB = Color(0x1F000000)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Design tokens — single source of truth for the glassmorphic system. Every
-// screen references these so blur, corner radius and elevation stay consistent.
-// ─────────────────────────────────────────────────────────────────────────────
-object DesignTokens {
-    val glassBlur = 16.dp    // frosted-card backdrop blur (backdrop-filter: blur(16px))
-    val backdropBlur = 8.dp  // scenic full-screen backdrop blur (backdrop-filter: blur(8px))
-    val radiusCard = 20.dp   // itinerary glass cards
-    val radiusTile = 15.dp   // 3D/duotone circular icon containers
-    val radiusPill = 99.dp   // pills, badges, floating dock, chips
-    val radiusMedia = 14.dp  // inline 1:1 media thumbnails
-    val radiusMap = 22.dp    // floating mini-map widget
-    val radiusDock = 28.dp   // floating bottom dock
-    val elevationCard = 10.dp
-}
-
-// ── Scenic backdrop palette (theme-aware) ────────────────────────────────────
-// A stylised "landscape" wall — sky → sun → horizon → ground — sits behind the
-// itinerary as a blurred full-screen backdrop with a high-contrast scrim overlay
-// so glass cards & text stay WCAG AA legible in both light and dark mode.
-@Immutable
-data class BackdropGradient(
-    val sky: Color,
-    val sun: Color,
-    val horizon: Color,
-    val ground: Color,
-    // high-contrast vertical scrim laid over the blurred landscape for legibility
-    val scrimTop: Color,
-    val scrimBottom: Color
-)
-
-private val BackdropDark = BackdropGradient(
-    sky = Color(0xFF0A221F),
-    sun = Color(0xFF4DB4AF),
-    horizon = Color(0xFF154E53),
-    ground = Color(0xFF07201C),
-    scrimTop = Color(0xEE000000),   // ~93% dark veil top (over title zone)
-    scrimBottom = Color(0xCC000000)
-)
-
-private val BackdropLight = BackdropGradient(
-    sky = Color(0xFF8FB8B4),
-    sun = Color(0xFFF4E3C2),
-    horizon = Color(0xFF6FA39C),
-    ground = Color(0xFFDCE6DF),
-    scrimTop = Color(0x66000000),
-    scrimBottom = Color(0x66000000)
-)
-
-val LocalBackdrop = staticCompositionLocalOf { BackdropDark }
-
-/** Theme-aware scenic palette: `Backdrop.sky`, `Backdrop.scrimTop`, etc. */
-val Backdrop: BackdropGradient
-    @Composable get() = LocalBackdrop.current
-
 // Item kind → muted safari-tone glyphs (each kind its own calm hue on its tile).
 val KindColor: Map<String, Color> = mapOf(
     "transit" to Color(0xFF3E99A0), // teal
@@ -352,7 +297,6 @@ fun TravollioTheme(darkTheme: Boolean = true, content: @Composable () -> Unit) {
         LocalSurfaceGlass provides (if (darkTheme) SurfaceGlassDark else SurfaceGlassLight),
         LocalGlassBorder provides (if (darkTheme) GlassBorderDark else GlassBorderLight),
         LocalScrim provides (if (darkTheme) ScrimDark else ScrimLight),
-        LocalBackdrop provides (if (darkTheme) BackdropDark else BackdropLight),
     ) {
         MaterialTheme(
             colorScheme = if (darkTheme) DarkScheme else LightScheme,
