@@ -272,9 +272,11 @@ class GeminiAgent(private val db: AppDatabase) {
             .joinToString("\n\n") { d -> "[Document content — ${d.name}]\n${d.text!!.take(MAX_DOC_TEXT)}" }
         val attachNote = if (attachments.isEmpty()) "" else
             "\n\n[Attachments: $names]\n\n$docTexts"
-        // When vision is enabled and image attachments are present, send them as OpenAI
-        // content parts (base64 data URI) so a vision-capable local/cloud model can read them.
-        val images = if (AgentConfig.vision) attachments.filter { it.mime.startsWith("image/") } else emptyList()
+        // Images are sent to the model every time the user attaches one (auto-vision):
+        // a vision-capable local/cloud model reads them as OpenAI image_url parts. If a
+        // provider rejects the parts (text-only model → HTTP 4xx), the loop below retries
+        // the turn text-only instead of failing outright.
+        val images = attachments.filter { it.mime.startsWith("image/") }
         val userMessage = JSONObject().put("role", "user")
         if (images.isEmpty()) {
             userMessage.put("content", userText + attachNote)
@@ -282,16 +284,16 @@ class GeminiAgent(private val db: AppDatabase) {
             val parts = JSONArray()
             parts.put(JSONObject().put("type", "text").put("text", userText + attachNote))
             images.forEach { m ->
-                val bytes = runCatching { java.io.File(m.path).readBytes() }.getOrNull()
-                if (bytes != null && bytes.size <= 2_000_000) {
-                    val b64 = java.util.Base64.getEncoder().encodeToString(bytes)
+                imageDataUri(m)?.let { uri ->
                     parts.put(JSONObject().put("type", "image_url")
-                        .put("image_url", JSONObject().put("url", "data:${m.mime};base64,$b64")))
+                        .put("image_url", JSONObject().put("url", uri)))
                 }
             }
             userMessage.put("content", parts)
         }
         messages.put(userMessage)
+        val userMessageIndex = messages.length() - 1
+        var sentImages = images.isNotEmpty()
 
         var lastError: String? = null
         for (turn in 0 until 6) {
@@ -312,6 +314,14 @@ class GeminiAgent(private val db: AppDatabase) {
                 // so no mutation ran; we can safely retry once WITHOUT streaming in case the
                 // provider refuses the SSE form (local servers).
                 val firstErr = lastHttpError ?: "network error"
+                if (sentImages && firstErr.startsWith("HTTP")) {
+                    // Provider rejected the image parts (text-only model) — swap the user
+                    // message for its text-only form and retry so the turn still works.
+                    sentImages = false
+                    messages.put(userMessageIndex, JSONObject().put("role", "user").put("content", userText + attachNote))
+                    if (lastError == null) lastError = firstErr
+                    continue
+                }
                 if (firstErr.startsWith("HTTP")) {
                     resp = postRaw(body)
                     if (resp == null) { lastError = lastHttpError ?: firstErr; break }
@@ -997,6 +1007,34 @@ class GeminiAgent(private val db: AppDatabase) {
     }
 
     // ---------- http ----------
+
+    /**
+     * Base64 data URI for one image attachment, ready to post as an OpenAI image_url
+     * part. Files over ~2 MB (typical camera shots) are downscaled to a 1568px long
+     * edge JPEG instead of being dropped, so photos always reach a vision-capable model.
+     */
+    private fun imageDataUri(m: com.odago.travollio.data.AttachmentMeta): String? = runCatching {
+        val bytes = java.io.File(m.path).readBytes()
+        if (bytes.size <= 2_000_000) {
+            "data:${m.mime};base64,${java.util.Base64.getEncoder().encodeToString(bytes)}"
+        } else {
+            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 }
+            val bmp = android.graphics.BitmapFactory.decodeFile(m.path, opts) ?: return@runCatching null
+            val maxDim = maxOf(bmp.width, bmp.height)
+            val scale = 1568f / maxDim
+            val scaled = if (scale < 1f) {
+                android.graphics.Bitmap.createScaledBitmap(
+                    bmp,
+                    (bmp.width * scale).toInt().coerceAtLeast(1),
+                    (bmp.height * scale).toInt().coerceAtLeast(1),
+                    true
+                )
+            } else bmp
+            val baos = java.io.ByteArrayOutputStream()
+            scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, baos)
+            "data:image/jpeg;base64,${java.util.Base64.getEncoder().encodeToString(baos.toByteArray())}"
+        }
+    }.getOrNull()
 
     private fun attachedNames(cardJson: String): String = try {
         val arr = JSONArray(cardJson)
