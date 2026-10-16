@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import com.odago.travollio.BuildConfig
 import com.odago.travollio.data.AgentConfig
 import com.odago.travollio.data.AgentProvider
+import com.odago.travollio.data.SettingsPrefs
 import com.odago.travollio.ui.Accent
 import com.odago.travollio.ui.AccentDeep
 import com.odago.travollio.ui.InkPrimary
@@ -283,6 +284,9 @@ fun SettingsScreen(darkTheme: Boolean, onDarkThemeChange: (Boolean) -> Unit) {
         item { SectionHeader("AI Assistant") }
         item { AiSettingsCard() }
 
+        item { SectionHeader("Live data") }
+        item { LiveDataCard() }
+
         item { SectionHeader("About") }
         item {
             GlassCard(fill = MaterialTheme.colorScheme.primaryContainer) {
@@ -508,6 +512,40 @@ private fun AiSettingsCard() {
                 val ok = r.startsWith("Connected")
                 Text(r, style = MaterialTheme.typography.bodySmall, color = if (ok) Sage else InkSecondary)
             }
+        }
+    }
+}
+
+/**
+ * Live on-phone data: optional OpenWeatherMap key for forecasts (weather_get,
+ * daily weather alerts). Blank = offline; everything else keeps working.
+ * Free key: openweathermap.org → Sign up → API keys.
+ */
+@Composable
+private fun LiveDataCard() {
+    val context = LocalContext.current
+    var key by remember { mutableStateOf(SettingsPrefs.weatherApiKey(context)) }
+    var saved by remember { mutableStateOf(false) }
+
+    GlassCard {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Weather", style = MaterialTheme.typography.titleSmall, color = AccentDeep)
+            Text(
+                "Powers live forecasts and rain alerts. Free key from openweathermap.org.",
+                style = MaterialTheme.typography.bodySmall, color = InkSecondary
+            )
+            OutlinedTextField(
+                value = key, onValueChange = { key = it; saved = false },
+                label = { Text("OpenWeatherMap key (optional)") }, singleLine = true,
+                visualTransformation = if (key.isEmpty()) VisualTransformation.None else PasswordVisualTransformation()
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = {
+                    SettingsPrefs.setWeatherApiKey(context, key)
+                    saved = true
+                }) { Text("Save", color = AccentDeep) }
+            }
+            if (saved) Text("Saved ✓", style = MaterialTheme.typography.bodySmall, color = Sage)
         }
     }
 }

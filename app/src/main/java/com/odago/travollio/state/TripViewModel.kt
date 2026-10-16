@@ -14,6 +14,7 @@ import com.odago.travollio.data.AttachmentMeta
 import com.odago.travollio.data.ChatMessage
 import com.odago.travollio.data.Fx
 import com.odago.travollio.data.MAX_DOC_TEXT
+import com.odago.travollio.data.SettingsPrefs
 import com.odago.travollio.data.Transaction
 import com.odago.travollio.data.Trip
 import kotlinx.coroutines.Dispatchers
@@ -133,7 +134,9 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
                     // Stream the answer live into streamingText; blocking IO is bounded by the
                     // connection's connect/read timeouts, so no coroutine timeout (which can't
                     // cancel a blocking socket read anyway) is needed here.
-                    val result = GeminiAgent(db).respond(history, trimmed, metas) { delta ->
+                    val app = getApplication<Application>()
+                    val result = GeminiAgent(db) { SettingsPrefs.weatherApiKey(app) }
+                        .respond(history, trimmed, metas) { delta ->
                         _streamingText.value += delta
                     }
                     recordOutcome(OUTCOME_OK, "DeepSeek agent reply")

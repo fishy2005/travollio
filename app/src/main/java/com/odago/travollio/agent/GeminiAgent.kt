@@ -8,8 +8,10 @@ import com.odago.travollio.data.Day
 import com.odago.travollio.data.Document
 import com.odago.travollio.data.Item
 import com.odago.travollio.data.MAX_DOC_TEXT
+import com.odago.travollio.data.PriceWatch
 import com.odago.travollio.data.Transaction
 import com.odago.travollio.data.Trip
+import com.odago.travollio.data.Weather
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -30,7 +32,10 @@ import java.net.URL
  *  - Attachments are listed by name/type; images are only sent as vision parts
  *    when the user enables Vision in Settings (text-only models stay text-only).
  */
-class GeminiAgent(private val db: AppDatabase) {
+class GeminiAgent(
+    private val db: AppDatabase,
+    private val weatherApiKey: () -> String? = { null }
+) {
 
     /** Raised when the cloud (DeepSeek) call fails for any reason, with a human reason. */
     class CloudException(message: String) : Exception(message)
@@ -52,7 +57,7 @@ class GeminiAgent(private val db: AppDatabase) {
         Home currency is ILS (₪); show local currency with its ₪ equivalent when both exist.
         Rules:
         - If there's no trip yet, don't tell the user to make one — create it yourself with trip_create (name + startDate + endDate), then build out days with day_add. itinerary_get / today_plan will tell you whether a trip exists.
-        - Act, don't ask. You have full control of the whole app and can drive it directly: trips (trip_create / trip_new / trip_update / trip_switch / trip_archive / trip_delete / trip_list / trip_get), days (day_add / day_update / day_remove), the itinerary items (itinerary_add / itinerary_update / itinerary_move / itinerary_remove / itinerary_import for bulk), the budget (money_add / money_summary / money_list / money_convert), travel documents (docs_add / docs_get), stored files (files_list / files_attach), daily notes (day_note), and today's view (today_plan). Just do what the traveler asked. Inspect state silently with itinerary_get / today_plan / money_summary first when you need details, then act in the same turn. Confirm in one short line like "Added to today's plans." or "Logged 4,500 JPY for sushi."
+        - Act, don't ask. You have full control of the whole app and can drive it directly: trips (trip_create / trip_new / trip_update / trip_switch / trip_archive / trip_delete / trip_list / trip_get), days (day_add / day_update / day_remove), the itinerary items (itinerary_add / itinerary_update / itinerary_move / itinerary_remove / itinerary_import for bulk), the budget (money_add / money_summary / money_list / money_convert), travel documents (docs_add / docs_get), stored files (files_list / files_attach), daily notes (day_note), live weather (weather_get), price watches (pricewatch_add / pricewatch_list / pricewatch_remove / pricewatch_check), and today's view (today_plan). Just do what the traveler asked. Inspect state silently with itinerary_get / today_plan / money_summary first when you need details, then act in the same turn. Confirm in one short line like "Added to today's plans." or "Logged 4,500 JPY for sushi."
         - Multiple trips: when a trip is finished, offer trip_archive to keep it for reference; start a fresh one with trip_new (works even if others exist); switch to a saved trip anytime with trip_switch; enumerate with trip_list. Never delete a trip without the user confirming.
         - Preview before destructive/bulk: for trip_delete, day_remove, and itinerary_import, do NOT pass confirm:true on the first call. Instead state what you'll do (e.g. "I'll delete 'Tokyo' and all its days/items/shows — confirm?") and wait; only call it again with confirm:true after the user explicitly says yes.
         - Importing an itinerary (Word/document): when the user attaches a document, its text is provided as [Document content …]. Treat every date as anchored to the trip's startDate; expand ranges like "Days 2-3" into separate days; convert "3pm" → 15:00 and "¥9,800"/"9800 yen" → costLocal 9800 ccy JPY; put booking refs into confirmation; put per-day summaries into day_note. If a trip already exists, ask whether to replace, or archive + start a new one. Use itinerary_import to add many items in one call.
@@ -179,6 +184,28 @@ class GeminiAgent(private val db: AppDatabase) {
                 .put("confirm", JSONObject().put("type", "boolean").put("description", "required; true only after the user confirms")))))
         put(toolDecl("today_plan", "What the Today tab shows: the current day (or first day), its city/date, its plan items, and the AI note. Read this before answering 'what's today'.",
             JSONObject().put("type", "object").put("properties", JSONObject()).put("required", JSONArray())))
+        put(toolDecl("weather_get", "Live 5-day weather forecast (OpenWeatherMap) for trip coordinates. Pass lat/lng, or a 1-based 'day' to use that day's first item with coordinates, or nothing to use the next outdoor item. Returns per-day condition/temp plus an unfavorable verdict. Needs a key in Settings → Live data.",
+            JSONObject().put("type", "object").put("properties", JSONObject()
+                .put("lat", JSONObject().put("type", "number"))
+                .put("lng", JSONObject().put("type", "number"))
+                .put("day", JSONObject().put("type", "integer").put("description", "1-based day index from itinerary_get"))
+                .put("date", JSONObject().put("type", "string").put("description", "yyyy-MM-dd to highlight, optional")))))
+        put(toolDecl("pricewatch_add", "Watch a target price (e.g. hotel night, tickets, flight). Alerts fire when a recorded observation hits the target. Observations are recorded with pricewatch_check.",
+            JSONObject().put("type", "object").put("properties", JSONObject()
+                .put("label", JSONObject().put("type", "string").put("description", "what is being watched, e.g. 'teamLab tickets'"))
+                .put("targetAmount", JSONObject().put("type", "number"))
+                .put("targetCcy", JSONObject().put("type", "string").put("description", "e.g. JPY"))
+                .put("itemId", JSONObject().put("type", "integer").put("description", "linked itinerary item, optional"))
+                .put("note", JSONObject().put("type", "string")))))
+        put(toolDecl("pricewatch_list", "List the trip's price watches with targets, last observations, and hit status.",
+            JSONObject().put("type", "object").put("properties", JSONObject()).put("required", JSONArray())))
+        put(toolDecl("pricewatch_remove", "Remove a price watch by id.",
+            JSONObject().put("type", "object").put("properties", JSONObject()
+                .put("id", JSONObject().put("type", "integer")))))
+        put(toolDecl("pricewatch_check", "Record an observed price for a watch (same currency as its target). Returns whether the target is hit.",
+            JSONObject().put("type", "object").put("properties", JSONObject()
+                .put("id", JSONObject().put("type", "integer").put("description", "watch id from pricewatch_list"))
+                .put("observedAmount", JSONObject().put("type", "number")))))
         put(toolDecl("trip_list", "List every saved trip with its id, name, dates, city, whether it's archived, and which is active. Use before archiving/switching/importing.",
             JSONObject().put("type", "object").put("properties", JSONObject()).put("required", JSONArray())))
         put(toolDecl("trip_get", "Get one trip's full detail (by tripId, or the active trip if omitted): its metadata, spend, and each day with items.",
@@ -394,6 +421,11 @@ class GeminiAgent(private val db: AppDatabase) {
         "trip_archive" -> tripArchive(args)
         "trip_delete" -> tripDelete(args)
         "itinerary_import" -> itineraryImport(args)
+        "weather_get" -> weatherGet(args)
+        "pricewatch_add" -> priceWatchAdd(args)
+        "pricewatch_list" -> priceWatchList()
+        "pricewatch_remove" -> priceWatchRemove(args)
+        "pricewatch_check" -> priceWatchCheck(args)
         else -> JSONObject().put("error", "unknown tool $name")
     }
 
@@ -413,6 +445,7 @@ class GeminiAgent(private val db: AppDatabase) {
                     .put("title", it.title).put("kind", it.kind)
                     .put("place", it.place ?: JSONObject.NULL)
                     .put("confirmation", it.confirmation ?: JSONObject.NULL)
+                    .put("lat", it.lat ?: JSONObject.NULL).put("lng", it.lng ?: JSONObject.NULL)
                     .put("costLocal", it.costLocal ?: JSONObject.NULL))
             }
             dayArr.put(JSONObject().put("day", idx + 1).put("date", d.date).put("city", d.city).put("items", itemArr))
@@ -828,6 +861,112 @@ class GeminiAgent(private val db: AppDatabase) {
         }
         return JSONObject().put("day", days.indexOf(day) + 1).put("date", day.date).put("city", day.city)
             .put("note", note?.content ?: JSONObject.NULL).put("items", itemArr)
+    }
+
+    // ---------- live weather + price watches (on-phone, no server) ----------
+
+    private suspend fun weatherGet(args: JSONObject): JSONObject {
+        val key = weatherApiKey() ?: ""
+        if (key.isBlank()) return JSONObject()
+            .put("error", "no weather key — add a free OpenWeatherMap key in Settings → Live data")
+        val trip = db.activeTrip() ?: return JSONObject().put("error", "no active trip")
+        val days = db.dayDao().daysForTripOnce(trip.id)
+        val items = db.itemDao().itemsForTripOnce(trip.id)
+        // Resolve coordinates: explicit lat/lng wins, then the given day's first
+        // geotagged item, then the next upcoming outdoor item with coordinates.
+        var lat: Double? = args.optDouble("lat", Double.NaN).takeIf { !it.isNaN() }
+        var lng: Double? = args.optDouble("lng", Double.NaN).takeIf { !it.isNaN() }
+        if (lat == null || lng == null) {
+            val dayIdx = args.optInt("day", -1)
+            val pool = if (dayIdx > 0 && dayIdx <= days.size) {
+                val dayId = days.sortedBy { it.date }[dayIdx - 1].id
+                items.filter { it.dayId == dayId }
+            } else {
+                val today = java.time.LocalDate.now().toString()
+                items.filter { Weather.isOutdoorKind(it.kind) }.sortedBy {
+                    days.firstOrNull { d -> d.id == it.dayId }?.date ?: ""
+                }.filter { (days.firstOrNull { d -> d.id == it.dayId }?.date ?: "") >= today }
+                    .ifEmpty { items }
+            }
+            val geo = pool.firstOrNull { it.lat != null && it.lng != null }
+                ?: return JSONObject().put("error", "no coordinates on file — pass lat/lng, or add them to an item")
+            lat = geo.lat; lng = geo.lng
+        }
+        val days5 = Weather.forecast(lat!!, lng!!, key)
+            ?: return JSONObject().put("error", "forecast unavailable (network or bad key?)")
+        val wantDate = args.optString("date", "")
+        val arr = JSONArray()
+        days5.forEach { f ->
+            arr.put(JSONObject().put("date", f.date).put("condition", f.condition)
+                .put("description", f.description).put("tempC", f.tempC).put("rainMm", f.rainMm)
+                .put("unfavorable", Weather.isUnfavorable(f.condition, f.tempC)))
+        }
+        val out = JSONObject().put("lat", lat).put("lng", lng).put("days", arr)
+        if (wantDate.isNotBlank()) {
+            val hit = days5.firstOrNull { it.date == wantDate }
+            if (hit != null) out.put("verdict", JSONObject().put("date", hit.date)
+                .put("unfavorable", Weather.isUnfavorable(hit.condition, hit.tempC))
+                .put("summary", "${hit.description}, ${"%.0f".format(hit.tempC)}°C"))
+        }
+        return out
+    }
+
+    private suspend fun priceWatchAdd(args: JSONObject): JSONObject {
+        val trip = db.activeTrip() ?: return JSONObject().put("error", "no active trip")
+        val label = args.optString("label", "").trim().take(120)
+        if (label.isEmpty()) return JSONObject().put("error", "missing label")
+        val target = args.optDouble("targetAmount", Double.NaN)
+        if (target.isNaN() || target <= 0) return JSONObject().put("error", "targetAmount must be > 0")
+        val ccy = args.optString("targetCcy", "").trim().uppercase().ifEmpty { trip.localCcy }
+        val itemId = args.optLong("itemId", -1L).takeIf { it >= 0 }
+        if (itemId != null && db.itemDao().itemOnce(itemId) == null) {
+            return JSONObject().put("error", "no such item $itemId")
+        }
+        val id = db.priceWatchDao().insert(
+            PriceWatch(
+                tripId = trip.id, label = label, itemId = itemId,
+                targetAmount = target, targetCcy = ccy,
+                note = args.optString("note", "").takeIf { it.isNotBlank() },
+                createdAt = java.time.Instant.now().toString()
+            )
+        )
+        return JSONObject().put("ok", true).put("id", id)
+            .put("message", "Watching '$label' — alert at $target $ccy or below.")
+    }
+
+    private suspend fun priceWatchList(): JSONObject {
+        val trip = db.activeTrip() ?: return JSONObject().put("error", "no active trip")
+        val arr = JSONArray()
+        db.priceWatchDao().forTripOnce(trip.id).forEach { w ->
+            arr.put(JSONObject().put("id", w.id).put("label", w.label)
+                .put("targetAmount", w.targetAmount).put("targetCcy", w.targetCcy)
+                .put("lastObserved", w.lastObserved ?: JSONObject.NULL)
+                .put("hit", w.lastObserved != null && w.lastObserved <= w.targetAmount)
+                .put("note", w.note ?: JSONObject.NULL))
+        }
+        return JSONObject().put("watches", arr)
+    }
+
+    private suspend fun priceWatchRemove(args: JSONObject): JSONObject {
+        val w = db.priceWatchDao().once(args.optLong("id", -1L))
+            ?: return JSONObject().put("error", "no such watch")
+        db.priceWatchDao().delete(w)
+        return JSONObject().put("ok", true).put("message", "Removed watch '${w.label}'.")
+    }
+
+    private suspend fun priceWatchCheck(args: JSONObject): JSONObject {
+        val w = db.priceWatchDao().once(args.optLong("id", -1L))
+            ?: return JSONObject().put("error", "no such watch — list them with pricewatch_list")
+        val obs = args.optDouble("observedAmount", Double.NaN)
+        if (obs.isNaN() || obs < 0) return JSONObject().put("error", "observedAmount must be >= 0")
+        val now = java.time.Instant.now().toString()
+        val hit = obs <= w.targetAmount
+        db.priceWatchDao().update(
+            w.copy(lastObserved = obs, lastObservedTs = now, lastAlertTs = if (hit) now else w.lastAlertTs)
+        )
+        return JSONObject().put("ok", true).put("hit", hit)
+            .put("message", if (hit) "Target hit: '${w.label}' at $obs ${w.targetCcy} (target ${w.targetAmount})."
+                else "'${w.label}' at $obs ${w.targetCcy} — still above target ${w.targetAmount}.")
     }
 
     // ---------- multi-trip + bulk import ----------

@@ -216,3 +216,30 @@ interface AttachmentDao {
     @Query("UPDATE attachments SET itemId = :itemId WHERE id IN (:ids)")
     suspend fun link(itemId: Long, ids: List<Long>)
 }
+
+@Dao
+interface PriceWatchDao {
+    @Query("SELECT * FROM price_watches WHERE tripId = :tripId ORDER BY id")
+    fun forTrip(tripId: Long): Flow<List<PriceWatch>>
+
+    @Query("SELECT * FROM price_watches WHERE tripId = :tripId ORDER BY id")
+    suspend fun forTripOnce(tripId: Long): List<PriceWatch>
+
+    @Query("SELECT * FROM price_watches ORDER BY id")
+    suspend fun allOnce(): List<PriceWatch>
+
+    @Query("SELECT * FROM price_watches WHERE id = :id LIMIT 1")
+    suspend fun once(id: Long): PriceWatch?
+
+    @Insert
+    suspend fun insert(w: PriceWatch): Long
+
+    @Update
+    suspend fun update(w: PriceWatch)
+
+    @Delete
+    suspend fun delete(w: PriceWatch)
+
+    @Query("DELETE FROM price_watches WHERE tripId = :tripId")
+    suspend fun deleteAll(tripId: Long)
+}

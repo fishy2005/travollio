@@ -20,6 +20,7 @@ object SettingsPrefs {
     private const val KEY_AGENT_KEY = "agent_api_key"
     private const val KEY_AGENT_MODEL = "agent_model"
     private const val KEY_AGENT_VISION = "agent_vision"
+    private const val KEY_WEATHER_KEY = "weather_api_key"
 
     fun isDarkTheme(context: Context): Boolean =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -53,5 +54,15 @@ object SettingsPrefs {
             .putString(KEY_AGENT_MODEL, model)
             .putBoolean(KEY_AGENT_VISION, vision)
             .apply()
+    }
+
+    /** Optional OpenWeatherMap key for live forecasts (Settings → Live data). Blank = offline. */
+    fun weatherApiKey(context: Context): String =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getString(KEY_WEATHER_KEY, "") ?: ""
+
+    fun setWeatherApiKey(context: Context, key: String) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putString(KEY_WEATHER_KEY, key.trim()).apply()
     }
 }

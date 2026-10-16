@@ -163,6 +163,34 @@ data class RoutineLog(
     val actionTaken: String? = null
 )
 
+/**
+ * On-phone price watch (backend parity, no server): track a target price for
+ * something trip-related (a hotel night, activity, flight). The traveler (or the
+ * agent) records observed prices via `pricewatch_check`; the worker alerts when an
+ * observation hits the target. Manual but honest — no fake provider API.
+ */
+@Entity(
+    tableName = "price_watches",
+    foreignKeys = [
+        ForeignKey(entity = Trip::class, parentColumns = ["id"], childColumns = ["tripId"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = Item::class, parentColumns = ["id"], childColumns = ["itemId"], onDelete = ForeignKey.SET_NULL)
+    ],
+    indices = [Index("tripId"), Index("itemId")]
+)
+data class PriceWatch(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val tripId: Long,
+    val label: String,              // e.g. "teamLab Planets tickets"
+    val itemId: Long? = null,       // linked itinerary moment, optional
+    val targetAmount: Double,       // alert when observed <= target
+    val targetCcy: String,           // currency of target + observations
+    val lastObserved: Double? = null,
+    val lastObservedTs: String? = null,
+    val lastAlertTs: String? = null, // set when an alert fired for the current observation
+    val note: String? = null,
+    val createdAt: String
+)
+
 /** Attachment handed to the agent after the UI copied it into the sandbox. */
 data class AttachmentMeta(
     val id: Long,

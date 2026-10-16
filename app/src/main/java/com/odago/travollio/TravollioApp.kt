@@ -13,6 +13,8 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.odago.travollio.data.AgentConfig
 import com.odago.travollio.routines.BudgetPaceWorker
+import com.odago.travollio.routines.PriceWatchWorker
+import com.odago.travollio.routines.WeatherCheckWorker
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.text.SimpleDateFormat
@@ -146,6 +148,26 @@ class TravollioApp : Application() {
             "daily-routines",
             ExistingPeriodicWorkPolicy.KEEP,
             daily
+        )
+
+        // Weather-aware rescheduling check (12h window; silent without a key).
+        val weather = PeriodicWorkRequestBuilder<WeatherCheckWorker>(12, TimeUnit.HOURS)
+            .setConstraints(constraints)
+            .build()
+        wm.enqueueUniquePeriodicWork(
+            "weather-check",
+            ExistingPeriodicWorkPolicy.KEEP,
+            weather
+        )
+
+        // Price-watch check (6h window per spec).
+        val prices = PeriodicWorkRequestBuilder<PriceWatchWorker>(6, TimeUnit.HOURS)
+            .setConstraints(constraints)
+            .build()
+        wm.enqueueUniquePeriodicWork(
+            "price-watch",
+            ExistingPeriodicWorkPolicy.KEEP,
+            prices
         )
     }
 }
