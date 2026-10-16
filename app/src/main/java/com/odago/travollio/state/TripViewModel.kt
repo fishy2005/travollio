@@ -2,9 +2,6 @@ package com.odago.travollio.state
 
 import android.app.Application
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -61,7 +58,7 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
                 db.dayDao().daysForTrip(trip.id),
                 db.transactionDao().forTrip(trip.id),
                 db.itemDao().itemsForTrip(trip.id),
-                db.documentDao().all()
+                db.documentDao().forTrip(trip.id)
             ) { days, txs, items, docs ->
                 AppState(
                     trip = trip,
@@ -143,11 +140,9 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
                     actionJson = result.actionJson
                     reply = if (result.text.isNotBlank()) result.text else localFallback(trimmed, null)
                 } catch (e: GeminiAgent.CloudException) {
-                    android.util.Log.e("TravollioAgent", "Cloud agent failed: ${e.message}", e)
                     recordOutcome(OUTCOME_OFFLINE, "couldn't reach online agent: ${e.message ?: "unknown error"}")
                     reply = localFallback(trimmed, e.message)
                 } catch (e: Exception) {
-                    android.util.Log.e("TravollioAgent", "Agent threw, using local engine", e)
                     val ex = "${e.javaClass.simpleName}: ${e.message}"
                     recordOutcome(OUTCOME_OFFLINE, "agent threw: $ex")
                     reply = localFallback(trimmed, null)
@@ -156,10 +151,8 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
                 db.chatMessageDao().insert(
                     ChatMessage(ts = Instant.now().toString(), role = "assistant", text = reply, actionJson = actionJson)
                 )
-                logLastMessage(trimmed, reply)
             } catch (e: Exception) {
                 // Last-resort: even if the DB write failed, surface an honest message and never hang.
-                android.util.Log.e("TravollioAgent", "send() failed", e)
                 recordOutcome(OUTCOME_ERROR, "send() failed: ${e.javaClass.simpleName}: ${e.message}")
                 try {
                     db.chatMessageDao().insert(
@@ -225,6 +218,13 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteItem(itemId: Long) = viewModelScope.launch {
         withContext(Dispatchers.IO) {
             val item = db.itemDao().itemOnce(itemId) ?: return@withContext
+            // Delete linked attachment rows + files from disk (no orphans).
+            try {
+                db.attachmentDao().forItemOnce(itemId).forEach { a ->
+                    runCatching { File(a.filePath).delete() }
+                    runCatching { db.attachmentDao().delete(a) }
+                }
+            } catch (_: Exception) {}
             db.itemDao().delete(item)
         }
     }
@@ -258,10 +258,41 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteTrip(tripId: Long) = viewModelScope.launch {
         withContext(Dispatchers.IO) {
             val t = db.tripDao().tripOnce(tripId) ?: return@withContext
+            try {
+                db.attachmentDao().forTripOnce(tripId).forEach { a ->
+                    runCatching { File(a.filePath).delete() }
+                    runCatching { db.attachmentDao().delete(a) }
+                }
+            } catch (_: Exception) {}
+            db.transactionDao().deleteAll(tripId)
             db.documentDao().deleteAll(tripId)
             db.tripDao().delete(t)
             val next = db.tripDao().allOnce().filter { !it.isArchived }.minByOrNull { it.id }
             db.setActiveTrip(next?.id)
+        }
+    }
+
+    fun deleteTransaction(txId: Long) = viewModelScope.launch {
+        withContext(Dispatchers.IO) {
+            val trip = db.activeTrip() ?: return@withContext
+            val tx = db.transactionDao().forTripOnce(trip.id).firstOrNull { it.id == txId } ?: return@withContext
+            db.transactionDao().delete(tx)
+        }
+    }
+
+    fun deleteDocument(docId: Long) = viewModelScope.launch {
+        withContext(Dispatchers.IO) {
+            val trip = db.activeTrip()
+            val docs = if (trip != null) db.documentDao().forTripOnce(trip.id) else db.documentDao().allOnce()
+            docs.firstOrNull { it.id == docId }?.let { db.documentDao().delete(it) }
+        }
+    }
+
+    fun deleteAttachment(attachmentId: Long) = viewModelScope.launch {
+        withContext(Dispatchers.IO) {
+            val a = db.attachmentDao().once(attachmentId) ?: return@withContext
+            runCatching { File(a.filePath).delete() }
+            runCatching { db.attachmentDao().delete(a) }
         }
     }
 
@@ -276,7 +307,6 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
             "The online agent is unavailable$why, so here's the offline answer:\n\n$local"
         }
     } catch (e: Exception) {
-        android.util.Log.e("TravollioAgent", "localFallback threw", e)
         "I couldn't reach the online agent right now. Please try again in a moment."
     }
 
@@ -285,90 +315,16 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
         const val OUTCOME_OK = "ok"
         const val OUTCOME_OFFLINE = "offline"
         const val OUTCOME_ERROR = "error"
-        const val VISIBLE_LOG = "Travollio_diagnostics.log"
     }
 
     /**
-     * Record the result of a send attempt: (a) surface it on-screen via [lastOutcome] so the user
-     * never has to hunt for a file, and (b) append to a diagnostics log that is actually readable
-     * on a modern phone. getExternalFilesDir(...)/crash_log.txt is hidden from file managers on
-     * Android 11+ (that's why the original log was "not found"), so we ALSO append to a MediaStore
-     * file in Downloads — reachable via the Downloads / My Files app and file pickers.
-     * Everything is best-effort: the logger must never be able to fail the app.
+     * Record the result of a send attempt on-screen via [lastOutcome] so the user
+     * never has to hunt for a file. Crash-only logging policy: no file/logcat writes
+     * here — only uncaught crashes are logged (see TravollioApp).
      */
-    private fun recordOutcome(kind: String, detail: String, exception: Throwable? = null) {
-        val stamp = Instant.now().toString()
-        val line = "[$stamp] $kind — $detail"
+    private fun recordOutcome(kind: String, detail: String) {
         // Only a non-success surfaces an on-screen banner; a good reply keeps the UI clean.
         _lastOutcome.value = if (kind == OUTCOME_OK) null else detail
-        if (exception != null) {
-            android.util.Log.e("TravollioAgent", "Agent diagnostic: $line", exception)
-        } else {
-            android.util.Log.i("TravollioAgent", "Agent diagnostic: $line")
-        }
-        appendDiagnostics("$line\n")
-    }
-
-    /**
-     * Write the last exchange to the diagnostics log so the newest user message and the
-     * reply are readable on-device (Downloads/Travollio_diagnostics.log) without opening the DB.
-     * Truncated — we log a short echo, not the whole thread.
-     */
-    private fun logLastMessage(userText: String, reply: String) {
-        appendDiagnostics("user — ${userText.take(300).noNewlines()}\nassistant — ${reply.take(600).noNewlines()}\n")
-    }
-
-    private fun String.noNewlines(): String = replace("\n", " ⏎ ")
-
-    private fun String.stripNewlines(): String = replace("\n", " ⏎ ")
-
-    /** Best-effort append to both the app-private and the visible Downloads log. */
-    private fun appendDiagnostics(entry: String) {
-        try {
-            val ctx = getApplication<Application>()
-            File(ctx.getExternalFilesDir(null), "crash_log.txt").appendText(entry)
-        } catch (_: Exception) {}
-        try {
-            val ctx = getApplication<Application>()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                appendToDownloads(ctx, entry)
-            }
-        } catch (_: Exception) {}
-    }
-
-    /** Append to a stable, user-openable log in Downloads via MediaStore (visible to the user). */
-    private fun appendToDownloads(ctx: android.content.Context, entry: String) {
-        val resolver = ctx.contentResolver
-        // Reuse an existing Travollio_diagnostics.log row if present, else create one.
-        var uri: android.net.Uri? = null
-        resolver.query(
-            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-            arrayOf(MediaStore.MediaColumns._ID),
-            "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
-            arrayOf(VISIBLE_LOG),
-            null
-        )?.use { c ->
-            if (c.moveToFirst()) {
-                val id = c.getLong(c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
-                uri = android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
-            }
-        }
-        if (uri == null) {
-            val values = android.content.ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, VISIBLE_LOG)
-                put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
-                put(MediaStore.MediaColumns.IS_PENDING, 0)
-            }
-            uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-        }
-        if (uri == null) return
-        try {
-            resolver.openOutputStream(uri, "wa")?.use { it.write(entry.toByteArray()) }
-        } catch (_: Exception) {
-            // Fall back to overwrite if the OS doesn't allow appending.
-            resolver.openOutputStream(uri, "w")?.use { it.write(entry.toByteArray()) }
-        }
     }
 
     /** File attachments straight onto a moment from the dossier sheet. */
@@ -397,9 +353,11 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
             val ctx = getApplication<Application>()
             val resolver = ctx.contentResolver
             val mime = resolver.getType(uri) ?: guessMime(uri.lastPathSegment)
-            val name = resolver.query(uri, null, null, null, null)?.use { c ->
-                val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (idx >= 0) c.getString(idx) else null
+            val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) c.getString(idx) else null
+                } else null
             } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file"
             val dir = File(ctx.filesDir, "attachments").apply { mkdirs() }
             val dest = File(dir, UUID.randomUUID().toString() + extFor(mime, name))

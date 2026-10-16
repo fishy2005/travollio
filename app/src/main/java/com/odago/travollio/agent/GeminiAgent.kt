@@ -27,8 +27,8 @@ import java.net.URL
  *  - Mutations (itinerary add/update/move/remove, day.note) write to Room → Flow → UI updates live.
  *  - On any network/API failure the caller falls back to the deterministic local engine
  *    and says so — no silent hallucination, no fake "cloud" answers.
- *  - DeepSeek is text-only: attachments are listed by name/type (not vision). Images
- *    need a vision-capable model (Gemini) when quota allows.
+ *  - Attachments are listed by name/type; images are only sent as vision parts
+ *    when the user enables Vision in Settings (text-only models stay text-only).
  */
 class GeminiAgent(private val db: AppDatabase) {
 
@@ -272,11 +272,11 @@ class GeminiAgent(private val db: AppDatabase) {
             .joinToString("\n\n") { d -> "[Document content — ${d.name}]\n${d.text!!.take(MAX_DOC_TEXT)}" }
         val attachNote = if (attachments.isEmpty()) "" else
             "\n\n[Attachments: $names]\n\n$docTexts"
-        // Images are sent to the model every time the user attaches one (auto-vision):
-        // a vision-capable local/cloud model reads them as OpenAI image_url parts. If a
+        // Images are sent only when the user enabled Vision (Settings → AI Assistant):
+        // a vision-capable model reads them as OpenAI image_url parts. If a
         // provider rejects the parts (text-only model → HTTP 4xx), the loop below retries
         // the turn text-only instead of failing outright.
-        val images = attachments.filter { it.mime.startsWith("image/") }
+        val images = if (AgentConfig.vision) attachments.filter { it.mime.startsWith("image/") } else emptyList()
         val userMessage = JSONObject().put("role", "user")
         if (images.isEmpty()) {
             userMessage.put("content", userText + attachNote)

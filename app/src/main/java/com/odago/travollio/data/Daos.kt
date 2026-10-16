@@ -105,6 +105,15 @@ interface TransactionDao {
 
     @Insert
     suspend fun insert(tx: Transaction): Long
+
+    @Update
+    suspend fun update(tx: Transaction)
+
+    @Delete
+    suspend fun delete(tx: Transaction)
+
+    @Query("DELETE FROM transactions WHERE tripId = :tripId")
+    suspend fun deleteAll(tripId: Long)
 }
 
 @Dao
@@ -112,8 +121,14 @@ interface DocumentDao {
     @Query("SELECT * FROM documents ORDER BY expiresAt")
     fun all(): Flow<List<Document>>
 
+    @Query("SELECT * FROM documents WHERE tripId = :tripId OR tripId IS NULL ORDER BY expiresAt")
+    fun forTrip(tripId: Long): Flow<List<Document>>
+
     @Query("SELECT * FROM documents ORDER BY expiresAt")
     suspend fun allOnce(): List<Document>
+
+    @Query("SELECT * FROM documents WHERE tripId = :tripId OR tripId IS NULL ORDER BY expiresAt")
+    suspend fun forTripOnce(tripId: Long): List<Document>
 
     @Insert
     suspend fun insert(doc: Document)
@@ -182,11 +197,20 @@ interface AttachmentDao {
     @Query("SELECT * FROM attachments WHERE itemId = :itemId ORDER BY createdAt")
     fun forItem(itemId: Long): Flow<List<Attachment>>
 
+    @Query("SELECT * FROM attachments WHERE itemId = :itemId ORDER BY createdAt")
+    suspend fun forItemOnce(itemId: Long): List<Attachment>
+
     @Query("SELECT * FROM attachments WHERE id = :id LIMIT 1")
     suspend fun once(id: Long): Attachment?
 
     @Insert
     suspend fun insert(a: Attachment): Long
+
+    @Delete
+    suspend fun delete(a: Attachment)
+
+    @Query("SELECT * FROM attachments WHERE itemId IN (SELECT i.id FROM items i JOIN days d ON i.dayId = d.id WHERE d.tripId = :tripId)")
+    suspend fun forTripOnce(tripId: Long): List<Attachment>
 
     /** File an attachment against an item (agent linking). */
     @Query("UPDATE attachments SET itemId = :itemId WHERE id IN (:ids)")

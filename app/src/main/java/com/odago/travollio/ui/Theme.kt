@@ -20,61 +20,60 @@ import androidx.compose.ui.unit.sp
 import com.odago.travollio.R
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Travollio design system — "Teal Safari" v0.3.5 (2026-08-26)
+// Travollio design system — "Terracotta Desert" v0.4.0
 //
-// A warm, outdoorsy travel look: deep safari-teal accent, cream-sand surfaces,
-// soft layered cards, rounded everything, modern sans-serif (Inter) throughout.
-// Single accent + thoughtful neutrals, so every screen reads calm and premium.
+// Bold & warm: burnt-orange accent on sand cream with warm charcoal surfaces.
+// Single accent + thoughtful neutrals, so every screen reads warm and premium.
 //
 // Every token is exposed through composition locals as a theme-aware
 // `@Composable getter` (same architecture as before). Components keep writing
 // `Color = InkPrimary` / `tint = AccentDeep` and get the right value for
 // whichever mode is active — no per-screen theme branching.
 //
-// Light palette:  canvas #EFE9DD (warm cream)  surface #FAF7F0  accent #17777D
-//                 text #20343A (teal-charcoal)  hairline #DAD4C6
-// Dark palette:   canvas #0E1617 (teal-forest) surface #16211F  accent #4DB4AF
-//                 text #EDF4F1                  hairline #23312E
+// Light palette:  canvas #F3EEE4 (sand cream) surface #FFFAF2 accent #C05A2A
+//                 text #33291F (warm charcoal) hairline #E2D5C2
+// Dark palette:   canvas #1E1A16 (warm charcoal) surface #2A251F accent #E08A52
+//                 text #F3EEE4                       hairline #3A332B
 //   ─────────────────────────────────────────────────────────────────────────────
 
 // ── Palette (dark) ──────────────────────────────────────────────────────────
-private val AccentDark = Color(0xFF4DB4AF)            // safari teal, readable on dark
-private val AccentDeepDark = Color(0xFF9BDFDA)        // pale teal for text/icons on dark
-private val AccentTintDark = Color(0xFF1A312F)        // deep teal container
-private val SageDark = Color(0xFF7FC39A)              // warm green (on-pace)
-private val SageTintDark = Color(0xFF183027)
+private val AccentDark = Color(0xFFE08A52)            // terracotta, readable on dark
+private val AccentDeepDark = Color(0xFFF0B98A)        // pale sand for text/icons on dark
+private val AccentTintDark = Color(0xFF3A2415)        // deep terracotta container
+private val SageDark = Color(0xFF9DBE8C)              // warm olive (on-pace)
+private val SageTintDark = Color(0xFF22301C)
 private val BlushDark = Color(0xFFE08972)             // warm coral (hot / error)
 private val BlushTintDark = Color(0xFF331E17)
-private val InkPrimaryDark = Color(0xFFEDF4F1)
-private val InkSecondaryDark = Color(0xFFA9BCB6)
-private val InkTertiaryDark = Color(0xFF6C7E79)
-private val HairlineDark = Color(0xFF23312E)
-private val RingTrackDark = Color(0xFF24423E)
-private val SurfaceSolidDark = Color(0xFF16211F)
-private val SurfaceGlassDark = Color(0xE616211F)
-private val SurfacePanelDark = Color(0xF216211F)
-private val GlassBorderDark = Color(0xFF23312E)
+private val InkPrimaryDark = Color(0xFFF3EEE4)
+private val InkSecondaryDark = Color(0xFFC4B8A6)
+private val InkTertiaryDark = Color(0xFF8D867A)
+private val HairlineDark = Color(0xFF3A332B)
+private val RingTrackDark = Color(0xFF453626)
+private val SurfaceSolidDark = Color(0xFF2A251F)
+private val SurfaceGlassDark = Color(0xE62A251F)
+private val SurfacePanelDark = Color(0xF22A251F)
+private val GlassBorderDark = Color(0xFF3A332B)
 private val ScrimDark = Color(0xE6000000)
-val CanvasBgDark = Color(0xFF0E1617)
-private val CanvasBgLight = Color(0xFFEFE9DD)
+val CanvasBgDark = Color(0xFF1E1A16)
+private val CanvasBgLight = Color(0xFFF3EEE4)
 
 // ── Palette (light) ──────────────────────────────────────────────────────────
-private val AccentLight = Color(0xFF17777D)           // safari teal
-private val AccentDeepLight = Color(0xFF0E555B)       // deep teal for text/icons on cream
-private val AccentTintLight = Color(0xFFDCEAE5)       // soft teal container
-private val SageLight = Color(0xFF4C8A6A)
-private val SageTintLight = Color(0xFFE0ECE3)
-private val BlushLight = Color(0xFFC05B43)
+private val AccentLight = Color(0xFFC05A2A)           // burnt orange
+private val AccentDeepLight = Color(0xFF9C4520)       // deep terracotta for text/icons
+private val AccentTintLight = Color(0xFFF4DED0)       // soft terracotta container
+private val SageLight = Color(0xFF6E8A4E)
+private val SageTintLight = Color(0xFFE6EBD8)
+private val BlushLight = Color(0xFFB5472F)
 private val BlushTintLight = Color(0xFFF6DFD8)
-private val InkPrimaryLight = Color(0xFF20343A)       // teal-charcoal
-private val InkSecondaryLight = Color(0xFF5E6B70)
-private val InkTertiaryLight = Color(0xFF94A0A5)
-private val HairlineLight = Color(0xFFDAD4C6)         // warm sand hairline
-private val RingTrackLight = Color(0xFFE4DED0)
-private val SurfaceSolidLight = Color(0xFFFAF7F0)
-private val SurfaceGlassLight = Color(0xF7F8F4EC)     // frosted warm cream
-private val SurfacePanelLight = Color(0xFAF6F2E9)
-private val GlassBorderLight = Color(0xFFE0D9CB)
+private val InkPrimaryLight = Color(0xFF33291F)       // warm charcoal
+private val InkSecondaryLight = Color(0xFF7A6F60)
+private val InkTertiaryLight = Color(0xFFA89F92)
+private val HairlineLight = Color(0xFFE2D5C2)         // sand hairline
+private val RingTrackLight = Color(0xFFEADDC9)
+private val SurfaceSolidLight = Color(0xFFFFFAF2)
+private val SurfaceGlassLight = Color(0xF7FFFAF2)     // frosted warm cream
+private val SurfacePanelLight = Color(0xFAFFFAF2)
+private val GlassBorderLight = Color(0xFFE2D5C2)
 private val ScrimLight = Color(0x59000000)
 
 // Legacy aliases kept for API compat.
@@ -84,12 +83,12 @@ val CanvasBg = CanvasBgDark
 val SoftShadowA = Color(0x33000000)
 val SoftShadowB = Color(0x1F000000)
 
-// Item kind → muted safari-tone glyphs (each kind its own calm hue on its tile).
+// Item kind → warm desert-tone glyphs (each kind its own calm hue on its tile).
 val KindColor: Map<String, Color> = mapOf(
-    "transit" to Color(0xFF3E99A0), // teal
-    "food" to Color(0xFF5E9A6E),    // green
-    "sight" to Color(0xFF6E8FA8),   // blue-grey
-    "hotel" to Color(0xFF7E7FA0),   // violet
+    "transit" to Color(0xFFC05A2A), // terracotta
+    "food" to Color(0xFF8A7A3B),    // sand olive
+    "sight" to Color(0xFFA8743B),   // dune amber
+    "hotel" to Color(0xFF7E6A9A),   // dusk violet
     "errand" to Color(0xFF9A7F5E)   // sand
 )
 
@@ -197,20 +196,20 @@ val Inter = FontFamily(
 
 private val DarkScheme = darkColorScheme(
     primary = AccentDark,
-    onPrimary = Color(0xFF062E2B),
+    onPrimary = Color(0xFF2E1A0C),
     primaryContainer = AccentTintDark,
     onPrimaryContainer = AccentDeepDark,
     secondary = SageDark,
-    onSecondary = Color(0xFF102118),
+    onSecondary = Color(0xFF1E2414),
     secondaryContainer = SageTintDark,
-    onSecondaryContainer = Color(0xFFC9EBD7),
+    onSecondaryContainer = Color(0xFFDCEBD0),
     tertiary = Sand,
     onTertiary = Color(0xFF241E10),
     background = CanvasBgDark,
     onBackground = InkPrimaryDark,
     surface = SurfaceSolidDark,
     onSurface = InkPrimaryDark,
-    surfaceVariant = Color(0xFF1C2A27),
+    surfaceVariant = Color(0xFF33291F),
     onSurfaceVariant = InkSecondaryDark,
     outline = HairlineDark,
     outlineVariant = HairlineDark,
@@ -226,18 +225,18 @@ private val LightScheme = lightColorScheme(
     primary = AccentLight,
     onPrimary = Color(0xFFFFFFFF),
     primaryContainer = AccentTintLight,
-    onPrimaryContainer = Color(0xFF0C3E42),
+    onPrimaryContainer = Color(0xFF5C2A10),
     secondary = SageLight,
     onSecondary = Color(0xFFFFFFFF),
     secondaryContainer = SageTintLight,
-    onSecondaryContainer = Color(0xFF12360C),
+    onSecondaryContainer = Color(0xFF2A3A12),
     tertiary = Sand,
     onTertiary = Color(0xFF241E10),
     background = CanvasBgLight,
     onBackground = InkPrimaryLight,
     surface = SurfaceSolidLight,
     onSurface = InkPrimaryLight,
-    surfaceVariant = Color(0xFFEFEAE0),
+    surfaceVariant = Color(0xFFF0E6D4),
     onSurfaceVariant = InkSecondaryLight,
     outline = HairlineLight,
     outlineVariant = HairlineLight,

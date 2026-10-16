@@ -23,6 +23,9 @@ class MainActivity : ComponentActivity() {
         ViewModelProvider(this, TripViewModelFactory(application))[TripViewModel::class.java]
     }
 
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* result ignored */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
@@ -60,8 +63,7 @@ class MainActivity : ComponentActivity() {
                 this, "android.permission.POST_NOTIFICATIONS"
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
             if (!granted) {
-                registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* result ignored */ }
-                    .launch("android.permission.POST_NOTIFICATIONS")
+                notificationPermissionLauncher.launch("android.permission.POST_NOTIFICATIONS")
             }
         }
     }

@@ -3,13 +3,16 @@ package com.odago.travollio.routines
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.odago.travollio.MainActivity
 import com.odago.travollio.data.AppDatabase
 import com.odago.travollio.data.RoutineState
 import java.time.Instant
@@ -27,7 +30,9 @@ class BudgetPaceWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         val db = AppDatabase.get(applicationContext)
         val trip = db.activeTrip() ?: return Result.success()
         val txs = db.transactionDao().forTripOnce(trip.id)
-        val docs = db.documentDao().allOnce()
+        val docs = db.documentDao().forTripOnce(trip.id)
+        val ccy = trip.homeCcy.ifBlank { "ILS" }
+        val sym = currencySymbol(ccy)
 
         val spent = txs.sumOf { it.amountHomeCcy }
         val cap = trip.budgetCapHomeCcy
@@ -45,7 +50,7 @@ class BudgetPaceWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
             val elapsed = (ChronoUnit.DAYS.between(start, today).toInt() + 1).coerceAtLeast(1)
             val projected = spent / (elapsed.toDouble() / totalDays)
             if (projected > cap * 1.05) {
-                message = "Budget pace: on track to spend ~₪${"%,.0f".format(projected)} vs your ₪${"%,.0f".format(cap)} cap. Time to trim."
+                message = "Budget pace: on track to spend ~$sym${"%,.0f".format(projected)} vs your $sym${"%,.0f".format(cap)} cap. Time to trim."
             } else if (spent / cap > 0.9 && today.isAfter(end.minusDays(1))) {
                 message = "Budget: you've used ${((spent / cap) * 100).toInt()}% of your cap with the trip still running."
             }
@@ -70,12 +75,20 @@ class BudgetPaceWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                     NotificationChannel(channelId, "Routines", NotificationManager.IMPORTANCE_DEFAULT)
                 )
             }
+            val intent = Intent(applicationContext, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pending = PendingIntent.getActivity(
+                applicationContext, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
             nm.notify(
                 System.currentTimeMillis().toInt(),
                 NotificationCompat.Builder(applicationContext, channelId)
                     .setSmallIcon(android.R.drawable.ic_dialog_info)
                     .setContentTitle("Travollio routine")
                     .setContentText(message)
+                    .setContentIntent(pending)
                     .setAutoCancel(true)
                     .build()
             )
@@ -103,5 +116,15 @@ class BudgetPaceWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         s?.let { LocalDate.parse(it) }
     } catch (_: Exception) {
         null
+    }
+
+    private fun currencySymbol(ccy: String): String = when (ccy.uppercase()) {
+        "ILS", "NIS" -> "₪"
+        "USD" -> "$"
+        "EUR" -> "€"
+        "GBP" -> "£"
+        "JPY", "CNY" -> "¥"
+        "INR" -> "₹"
+        else -> "$ccy "
     }
 }

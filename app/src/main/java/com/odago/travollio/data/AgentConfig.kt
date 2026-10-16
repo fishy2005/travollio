@@ -22,8 +22,8 @@ enum class AgentProvider(
     val defaultModel: String,
     val needsApiKey: Boolean
 ) {
-    LM_STUDIO("LM Studio", "http://localhost:1234/v1", "local-model", false),
-    OLLAMA("Ollama", "http://localhost:11434/v1", "llama3.2", false),
+    LM_STUDIO("LM Studio", "http://10.0.2.2:1234/v1", "local-model", false),
+    OLLAMA("Ollama", "http://10.0.2.2:11434/v1", "llama3.2", false),
     DEEPSEEK("DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat", true),
     OPENAI("OpenAI", "https://api.openai.com/v1", "gpt-4o-mini", true),
     GROQ("Groq", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", true),

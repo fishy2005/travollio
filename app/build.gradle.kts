@@ -66,8 +66,8 @@ android {
         applicationId = "com.odago.travollio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.3.7.4"
+        versionCode = 14
+        versionName = "0.4.0"
 
         // In-app updater feed (settings tab). HTTPS-only; see Updater.kt.
         buildConfigField("String", "GH_API_BASE", "\"$ghApiBase\"")

@@ -13,7 +13,6 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.odago.travollio.data.AgentConfig
 import com.odago.travollio.routines.BudgetPaceWorker
-import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.text.SimpleDateFormat
@@ -26,6 +25,7 @@ class TravollioApp : Application() {
     override fun onCreate() {
         super.onCreate()
         installCrashLogger()
+        cleanupLegacyLogs()
         // Restore the user's AI provider/key/model choice (falls back to the baked DeepSeek).
         AgentConfig.load(this)
         // pdfbox-android needs its resource loader initialised before the first PD
@@ -35,25 +35,19 @@ class TravollioApp : Application() {
     }
 
     /**
-     * Debug aid: capture any uncaught exception to a file on device so a crash that can't be
-     * reproduced here is self-documenting. Logs to getExternalFilesDir(null)/crash_log.txt and
-     * logcat tag "TravollioCrash". The default handler still runs afterwards.
+     * Crash-only logger: capture any uncaught exception to a single user-visible file
+     * (Downloads/Travollio_crash.log) + logcat tag "TravollioCrash". No routine/success
+     * logging anywhere else in the app. The default handler still runs afterwards.
      */
     private fun installCrashLogger() {
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
-                val dir = getExternalFilesDir(null)
                 val sw = StringWriter()
                 throwable.printStackTrace(PrintWriter(sw))
                 val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
                 val entry = "=== $stamp thread=${thread.name} ===\n$sw\n"
                 Log.e("TravollioCrash", entry)
-                if (dir != null) {
-                    File(dir, "crash_log.txt").appendText(entry)
-                }
-                // Also write where a phone user can actually open it — getExternalFilesDir is
-                // hidden from file managers on Android 11+. Works until the process dies.
                 appendVisibleCrash(entry)
             } catch (_: Exception) {
                 // never let the logger itself crash
@@ -61,6 +55,34 @@ class TravollioApp : Application() {
                 prev?.uncaughtException(thread, throwable)
             }
         }
+    }
+
+    /** One-time cleanup of legacy log files from the verbose-logging era. */
+    private fun cleanupLegacyLogs() {
+        try {
+            getExternalFilesDir(null)?.let { dir ->
+                java.io.File(dir, "crash_log.txt").takeIf { it.exists() }?.delete()
+            }
+        } catch (_: Exception) {}
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        try {
+            val resolver = contentResolver
+            resolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.MediaColumns._ID),
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                arrayOf("Travollio_diagnostics.log"),
+                null
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val uri = android.content.ContentUris.withAppendedId(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        c.getLong(c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
+                    )
+                    runCatching { resolver.delete(uri, null, null) }
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     /** Append a crash to Downloads via MediaStore so it is readable on a modern phone. */
