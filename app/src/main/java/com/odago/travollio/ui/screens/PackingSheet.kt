@@ -131,16 +131,12 @@ fun PackingSheet(
                 Spacer(Modifier.height(10.dp))
             }
 
-            Button(
+            com.odago.travollio.ui.components.PrimaryButton(
+                label = if (state.packing.isEmpty()) "Generate my packing list" else "Fill in what's missing",
                 onClick = onGenerate,
-                colors = ButtonDefaults.buttonColors(containerColor = Accent),
-                shape = RoundedCornerShape(99),
+                icon = Icons.Filled.AutoAwesome,
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Filled.AutoAwesome, null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.size(8.dp))
-                Text(if (state.packing.isEmpty()) "Generate a packing list for me" else "Fill in what's missing")
-            }
+            )
 
             Spacer(Modifier.height(12.dp))
 

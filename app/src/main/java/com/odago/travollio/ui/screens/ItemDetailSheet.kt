@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -131,26 +132,19 @@ fun ItemDetailSheet(
 
             // Check-off: keeps the engagement loop going from the dossier too.
             Spacer(Modifier.height(10.dp))
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = if (item.doneAt != null) Accent else AccentTint,
-                modifier = Modifier.clickable { onToggleDone(item) }
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                ) {
-                    Icon(
-                        if (item.doneAt != null) Icons.Filled.Check else Icons.Filled.CheckCircle,
-                        contentDescription = null,
-                        tint = if (item.doneAt != null) androidx.compose.ui.graphics.Color.White else Accent,
-                        modifier = Modifier.size(16.dp)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (item.doneAt != null) {
+                    com.odago.travollio.ui.components.GhostButton(
+                        label = "Done — tap to undo",
+                        onClick = { onToggleDone(item) },
+                        modifier = Modifier.weight(1f)
                     )
-                    Spacer(Modifier.size(8.dp))
-                    Text(
-                        if (item.doneAt != null) "Done — tap to undo" else "Mark as done",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (item.doneAt != null) androidx.compose.ui.graphics.Color.White else AccentDeep
+                } else {
+                    com.odago.travollio.ui.components.PrimaryButton(
+                        label = "Mark as done",
+                        onClick = { onToggleDone(item) },
+                        icon = Icons.Filled.CheckCircle,
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }

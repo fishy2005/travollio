@@ -574,7 +574,7 @@ private fun ExplorerCard(state: com.odago.travollio.data.AppState) {
 
     GlassCard(cornerRadius = 22.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("EXPLORER", style = MaterialTheme.typography.labelSmall, color = AccentDeep)
+            Text("EXPLORER", style = com.odago.travollio.ui.Overline, color = AccentDeep)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "Level $level",

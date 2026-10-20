@@ -99,7 +99,7 @@ fun TodayScreen(
                             }
                         }
                         metaLine?.let {
-                            Text(it, style = MaterialTheme.typography.labelSmall, color = AccentDeep)
+                            Text(it, style = com.odago.travollio.ui.Overline, color = AccentDeep)
                         }
                         Text(
                             day?.city ?: "Today",
@@ -149,9 +149,9 @@ fun TodayScreen(
         item(key = "todayHeader") {
             Text(
                 "Today".uppercase(),
-                style = MaterialTheme.typography.labelSmall,
+                style = com.odago.travollio.ui.Overline,
                 color = AccentDeep,
-                modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 4.dp)
+                modifier = Modifier.padding(start = 4.dp, top = 10.dp, bottom = 4.dp)
             )
         }
 
@@ -199,7 +199,7 @@ private fun BudgetCard(state: AppState) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("TRIP BUDGET", style = MaterialTheme.typography.labelSmall, color = AccentDeep)
+                Text("TRIP BUDGET", style = com.odago.travollio.ui.Overline, color = AccentDeep)
                 PaceChip(label = pace.first, hot = pace.second)
             }
             Text(
@@ -270,6 +270,7 @@ private fun PaceChip(label: String, hot: Boolean) {
 @Composable
 private fun ItineraryRow(item: Item, onToggleDone: (Long) -> Unit = {}) {
     val done = item.doneAt != null
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     Row(verticalAlignment = Alignment.CenterVertically) {
         // Check-off circle — the engagement loop: tap when you've done the thing.
         Box(
@@ -281,7 +282,10 @@ private fun ItineraryRow(item: Item, onToggleDone: (Long) -> Unit = {}) {
                 .then(
                     if (done) Modifier else Modifier.border(1.5.dp, Hairline, RoundedCornerShape(99))
                 )
-                .clickable { onToggleDone(item.id) },
+                .clickable {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                    onToggleDone(item.id)
+                },
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -341,7 +345,7 @@ private fun BriefingCard(state: AppState, dayId: Long?) {
 
     GlassCard(cornerRadius = 22.dp, contentPadding = 16.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("DAILY BRIEFING", style = MaterialTheme.typography.labelSmall, color = AccentDeep)
+            Text("DAILY BRIEFING", style = com.odago.travollio.ui.Overline, color = AccentDeep)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -380,32 +384,44 @@ private fun BriefStat(label: String, value: String, hot: Boolean) {
     }
 }
 
-/** Quick-action chips — the everyday loops: spend, plan, check, weather. */
+/** Quick-action chips — the everyday loops: spend, plan, check, weather.
+ *  The first is the filled primary; the rest stay quiet ghosts. */
 @Composable
 private fun QuickActions(onQuickAction: (String) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        QuickActionChip("Log spend", "money", Modifier.weight(1f), onQuickAction)
+        QuickActionChip("Log spend", "money", Modifier.weight(1f), onQuickAction, filled = true)
         QuickActionChip("Plan today", "plan", Modifier.weight(1f), onQuickAction)
         QuickActionChip("Weather", "weather", Modifier.weight(1f), onQuickAction)
     }
 }
 
 @Composable
-private fun QuickActionChip(label: String, action: String, modifier: Modifier = Modifier, onQuickAction: (String) -> Unit) {
+private fun QuickActionChip(
+    label: String,
+    action: String,
+    modifier: Modifier = Modifier,
+    onQuickAction: (String) -> Unit,
+    filled: Boolean = false
+) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     Surface(
-        modifier = modifier.clickable { onQuickAction(action) },
+        modifier = modifier
+            .clickable {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                onQuickAction(action)
+            },
         shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Hairline)
+        color = if (filled) Accent else MaterialTheme.colorScheme.surface,
+        border = if (filled) null else androidx.compose.foundation.BorderStroke(1.dp, Hairline)
     ) {
         Text(
             label,
             style = MaterialTheme.typography.labelMedium,
-            color = AccentDeep,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
+            color = if (filled) MaterialTheme.colorScheme.onPrimary else AccentDeep,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
         )
     }
 }

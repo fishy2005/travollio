@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -42,13 +43,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FlightTakeoff
+import androidx.compose.material.icons.filled.Luggage
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -68,6 +74,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -92,6 +99,8 @@ import com.odago.travollio.data.ChatMessage
 import com.odago.travollio.ui.Accent
 import com.odago.travollio.ui.AccentDeep
 import com.odago.travollio.ui.AccentTint
+import com.odago.travollio.ui.Blush
+import com.odago.travollio.ui.BlushTint
 import com.odago.travollio.ui.Hairline
 import com.odago.travollio.ui.InkPrimary
 import com.odago.travollio.ui.InkSecondary
@@ -100,6 +109,10 @@ import com.odago.travollio.ui.Sage
 import com.odago.travollio.ui.components.pressScale
 import com.odago.travollio.ui.components.springSnappy
 import com.odago.travollio.ui.tvColors
+
+/** Terracotta brush used for Pablo's identity surfaces (header orb, user bubbles). */
+private fun accentBrushChat(): Brush =
+    Brush.verticalGradient(listOf(Color(0xFFD06837), Color(0xFF9C4520)))
 
 /**
  * The AI assistant as a full-screen, first-class part of the app (like a chat app).
@@ -142,14 +155,43 @@ fun AssistantScreen(
             .imePadding()
             .navigationBarsPadding()
     ) {
-        // Header
-        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+        // Header — Pablo's identity: gradient orb avatar, name, live status.
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.SmartToy, contentDescription = null, tint = AccentDeep, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.size(8.dp))
-                Text("Assistant", style = MaterialTheme.typography.headlineMedium, color = InkPrimary)
-                Box(Modifier.weight(1f))
-                AgentStatusPill()
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(accentBrushChat()),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.AutoAwesome,
+                        contentDescription = null,
+                        tint = Color(0xFFFDF3E7),
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+                Spacer(Modifier.size(11.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Pablo", style = MaterialTheme.typography.headlineSmall, color = InkPrimary)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val online = AgentConfig.isConfigured
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(if (online) Sage else InkTertiary)
+                        )
+                        Spacer(Modifier.size(5.dp))
+                        Text(
+                            if (online) "Online · ${AgentConfig.label}" else "Offline — local agent",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = InkTertiary
+                        )
+                    }
+                }
+                if (!AgentConfig.isConfigured) AgentStatusPill()
                 IconButton(
                     onClick = { showResetDialog = true },
                     modifier = Modifier.size(32.dp)
@@ -162,20 +204,21 @@ fun AssistantScreen(
                     )
                 }
             }
-            Text(
-                "Your Travollio AI — ask it to plan, change, price or file anything.",
-                style = MaterialTheme.typography.labelSmall,
-                color = InkTertiary
-            )
             // Persistent diagnostic line: shows exactly what happened on the last send so a
             // silent failure is impossible to miss. It only appears when there's a problem.
             if (lastOutcome != null) {
-                Text(
-                    "⚠ $lastOutcome",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 2.dp)
-                )
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = BlushTint,
+                    modifier = Modifier.padding(top = 8.dp)
+                ) {
+                    Text(
+                        lastOutcome,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Blush,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
             }
         }
         HorizontalDivider(color = Hairline, thickness = 0.5.dp)
@@ -189,7 +232,7 @@ fun AssistantScreen(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (state.chat.isEmpty()) {
-                item(key = "welcome") { WelcomeHint() }
+                item(key = "welcome") { WelcomeHint(state, onSend) }
             }
             items(state.chat, key = { it.id }) { msg ->
                 ChatBubble(msg = msg, attachments = state.attachments, onGoto = onGoto)
@@ -234,23 +277,80 @@ fun AssistantScreen(
 
 /** Friendly empty state so a first visit isn't a blank wall. */
 @Composable
-private fun WelcomeHint() {
+private fun WelcomeHint(state: AppState, onSend: (String, List<Uri>) -> Unit) {
     Column(
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 28.dp, horizontal = 8.dp)
+            .padding(vertical = 20.dp, horizontal = 8.dp)
     ) {
+        Box(
+            modifier = Modifier
+                .size(58.dp)
+                .shadow(8.dp, RoundedCornerShape(20.dp), ambientColor = com.odago.travollio.ui.SoftShadowA, spotColor = com.odago.travollio.ui.SoftShadowB)
+                .clip(RoundedCornerShape(20.dp))
+                .background(accentBrushChat()),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Filled.AutoAwesome,
+                contentDescription = null,
+                tint = Color(0xFFFDF3E7),
+                modifier = Modifier.size(27.dp)
+            )
+        }
+        Spacer(Modifier.height(2.dp))
         Text(
-            "Plan with your AI assistant",
-            style = MaterialTheme.typography.headlineSmall,
+            "Hey, I'm Pablo",
+            style = MaterialTheme.typography.displaySmall,
             color = InkPrimary
         )
         Text(
-            "Try: \"Move the massage to 15:00\", \"What's my budget pace?\", \"Add a sushi dinner on day 3\", or \"Summarize day 2\". You can also attach a receipt or screenshot.",
+            "Your travel operator. I plan days, book ideas into your itinerary, watch your budget and file your papers — just tell me.",
             style = MaterialTheme.typography.bodyMedium,
-            color = InkSecondary
+            color = InkSecondary,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
+        Spacer(Modifier.height(6.dp))
+        welcomeSuggestions(state).forEach { (icon, title, prompt) ->
+            WelcomeSuggestion(icon, title, prompt) { onSend(prompt, emptyList()) }
+        }
+    }
+}
+
+/** Context-aware starter cards on the welcome hero — one tap sends straight to Pablo. */
+private fun welcomeSuggestions(state: AppState): List<Triple<ImageVector, String, String>> {
+    if (state.trip == null) {
+        return listOf(
+            Triple(Icons.Filled.FlightTakeoff, "Plan a trip to Tokyo", "Plan a trip to Tokyo, 5 days, ¥120k budget. Start with days and sights."),
+            Triple(Icons.Filled.Description, "Import my Word itinerary", "I'll attach my Word itinerary — create the trip from it."),
+            Triple(Icons.Filled.Luggage, "What should I pack?", "What should I pack for my trip? Make me a packing list.")
+        )
+    }
+    val cards = mutableListOf<Triple<ImageVector, String, String>>()
+    cards += Triple(Icons.Filled.WbSunny, "Plan the rest of today", "Fill in a good plan for the rest of today — leave no dead hours.")
+    cards += Triple(Icons.Filled.Luggage, "Generate my packing list", "Generate me a packing list for this trip.")
+    cards += Triple(Icons.Filled.AccountBalanceWallet, "How's my budget?", "How's my budget pace right now?")
+    return cards.take(3)
+}
+
+@Composable
+private fun WelcomeSuggestion(icon: ImageVector, title: String, prompt: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.tvColors.glassSurface,
+        border = BorderStroke(0.75.dp, MaterialTheme.tvColors.glassBorder),
+        modifier = Modifier
+            .fillMaxWidth()
+            .pressScale()
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+            Icon(icon, contentDescription = null, tint = AccentDeep, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.size(10.dp))
+            Text(title, style = MaterialTheme.typography.titleSmall, color = InkPrimary)
+        }
     }
 }
 
@@ -271,92 +371,106 @@ private fun AgentStatusPill() {
     }
 }
 
-/** Chat bubble: user + assistant both read on the bot's frosted glass so text stays legible
- *  in both themes (the user message is no longer dark-text-on-a-dark-accent pill). The user
- *  bubble is told apart by a teal accent ring; the assistant is plain glass. */
+/** Chat bubble: user messages get the terracotta gradient and sit right;
+ *  Pablo's replies are quiet glass cards anchored left with a loose "tail". */
 @Composable
 private fun ChatBubble(msg: ChatMessage, attachments: List<Attachment>, onGoto: (String) -> Unit) {
     val isUser = msg.role == "user"
-    val shape = RoundedCornerShape(
-        topStart = 18.dp,
-        topEnd = 18.dp,
-        bottomStart = if (isUser) 18.dp else 6.dp,
-        bottomEnd = if (isUser) 6.dp else 18.dp
-    )
     // Resolve sent attachments (from cardJson) against the live attachment store.
     val attachItems = msg.cardJson?.let { chatAttachmentItems(it) } ?: emptyList()
     val images = attachItems.mapNotNull { item -> attachments.firstOrNull { it.id == item.id && it.mimeType.startsWith("image/") } }
     val files = attachItems.filterNot { item -> images.any { it.id == item.id } }
-    Surface(
+
+    androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        shape = shape,
-        color = MaterialTheme.tvColors.glassSurface,
-        border = BorderStroke(1.dp, if (isUser) Accent.copy(alpha = 0.55f) else MaterialTheme.tvColors.glassBorder)
+            .padding(vertical = 3.dp),
+        contentAlignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart
     ) {
-        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-            // When the user only sent images (no caption), the "(attachment)" placeholder
-            // text is meaningless against real thumbnails — hide it and let the images speak.
-            val showText = !(isUser && images.isNotEmpty() && msg.text == "(attachment)")
-            if (showText) {
-                Text(
-                    markdownAnnotated(msg.text),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = InkPrimary
-                )
-            }
-            // Reply-side images render as a scrollable filmstrip; user tappable to open full.
-            if (images.isNotEmpty()) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .padding(top = if (showText) 8.dp else 0.dp)
-                        .horizontalScroll(rememberScrollState())
-                ) {
-                    images.forEach { ChatImageThumb(it) }
-                }
-            }
-            // Non-image attachments: a labelled file chip.
-            files.forEach { item ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                    Icon(
-                        Icons.Filled.AttachFile,
-                        contentDescription = null,
-                        tint = if (isUser) Accent else InkSecondary,
-                        modifier = Modifier.size(14.dp)
+        val maxW = maxWidth * (if (isUser) 0.82f else 0.9f)
+        val bubbleShape = RoundedCornerShape(
+            topStart = 20.dp,
+            topEnd = 20.dp,
+            bottomStart = if (isUser) 20.dp else 7.dp,
+            bottomEnd = if (isUser) 7.dp else 20.dp
+        )
+        Surface(
+            shape = bubbleShape,
+            color = if (isUser) Color.Transparent else MaterialTheme.tvColors.glassSurface,
+            border = if (isUser) null else BorderStroke(0.75.dp, MaterialTheme.tvColors.glassBorder),
+            modifier = Modifier.widthIn(max = maxW)
+        ) {
+            Column(
+                modifier = Modifier
+                    .then(
+                        if (isUser) Modifier.background(accentBrushChat(), bubbleShape)
+                        else Modifier
                     )
-                    Spacer(Modifier.size(4.dp))
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                // When the user only sent images (no caption), the "(attachment)" placeholder
+                // text is meaningless against real thumbnails — hide it and let the images speak.
+                val onAccent = MaterialTheme.colorScheme.onPrimary
+                val showText = !(isUser && images.isNotEmpty() && msg.text == "(attachment)")
+                if (showText) {
                     Text(
-                        item.name,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (isUser) Accent else InkSecondary,
-                        maxLines = 1
+                        markdownAnnotated(msg.text),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (isUser) onAccent else InkPrimary
                     )
                 }
-            }
-            // Deep-link button: only on assistant turns that changed something.
-            if (!isUser && msg.actionJson != null) {
-                val label = actionLabel(msg.actionJson)
-                if (label != null) {
+                // Reply-side images render as a scrollable filmstrip; user tappable to open full.
+                if (images.isNotEmpty()) {
                     Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .padding(top = 8.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(AccentTint)
-                            .clickable { onGoto(msg.actionJson) }
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .padding(top = if (showText) 8.dp else 0.dp)
+                            .horizontalScroll(rememberScrollState())
                     ) {
+                        images.forEach { ChatImageThumb(it) }
+                    }
+                }
+                // Non-image attachments: a labelled file chip.
+                files.forEach { item ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
                         Icon(
-                            Icons.AutoMirrored.Filled.ArrowForward,
+                            Icons.Filled.AttachFile,
                             contentDescription = null,
-                            tint = AccentDeep,
+                            tint = (if (isUser) onAccent else InkSecondary).copy(alpha = 0.8f),
                             modifier = Modifier.size(14.dp)
                         )
-                        Spacer(Modifier.size(6.dp))
-                        Text(label, style = MaterialTheme.typography.labelMedium, color = AccentDeep)
+                        Spacer(Modifier.size(4.dp))
+                        Text(
+                            item.name,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = (if (isUser) onAccent else InkSecondary).copy(alpha = 0.8f),
+                            maxLines = 1
+                        )
+                    }
+                }
+                // Deep-link button: only on assistant turns that changed something.
+                if (!isUser && msg.actionJson != null) {
+                    val label = actionLabel(msg.actionJson)
+                    if (label != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .padding(top = 8.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(Accent)
+                                .clickable { onGoto(msg.actionJson) }
+                                .padding(horizontal = 12.dp, vertical = 7.dp)
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.size(6.dp))
+                            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimary)
+                        }
                     }
                 }
             }
@@ -517,57 +631,68 @@ private fun StreamingBubble(text: String) {
         animationSpec = infiniteRepeatable(animation = tween(durationMillis = 700), repeatMode = RepeatMode.Reverse),
         label = "streamCaretAlpha"
     )
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        shape = RoundedCornerShape(
-            topStart = 18.dp, topEnd = 18.dp,
-            bottomStart = 6.dp, bottomEnd = 18.dp
-        ),
-        color = MaterialTheme.tvColors.glassSurface
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        contentAlignment = Alignment.CenterStart
     ) {
-        Row(
-            verticalAlignment = Alignment.Bottom,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+        val maxW = maxWidth * 0.9f
+        Surface(
+            shape = RoundedCornerShape(
+                topStart = 20.dp, topEnd = 20.dp, bottomStart = 7.dp, bottomEnd = 20.dp
+            ),
+            color = MaterialTheme.tvColors.glassSurface,
+            border = BorderStroke(0.75.dp, MaterialTheme.tvColors.glassBorder),
+            modifier = Modifier.widthIn(max = maxW)
         ) {
-            Box(Modifier.weight(1f)) {
-                Text(
-                    markdownAnnotated(text),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = InkPrimary
-                )
+            Row(
+                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                Box(Modifier.weight(1f)) {
+                    Text(
+                        markdownAnnotated(text),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = InkPrimary
+                    )
+                }
+                Text("›", color = Accent.copy(alpha = caretAlpha), style = MaterialTheme.typography.bodyMedium)
             }
-            Text("›", color = Accent.copy(alpha = caretAlpha), style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
 
-/** "…" thinking bubble with three staggered-pulse dots (spring-free — pure alpha pulse). */
+/** "…" thinking bubble: Pablo's typing state lives in his own reply card. */
 @Composable
 private fun ThinkingBubble() {
     val transition = rememberInfiniteTransition(label = "thinking")
     val dots = listOf(0, 220, 440)
-    Row(
-        modifier = Modifier.padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    Surface(
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 7.dp, bottomEnd = 20.dp),
+        color = MaterialTheme.tvColors.glassSurface,
+        border = BorderStroke(0.75.dp, MaterialTheme.tvColors.glassBorder),
+        modifier = Modifier.padding(vertical = 3.dp)
     ) {
-        dots.forEach { delay ->
-            val alpha by transition.animateFloat(
-                initialValue = 0.25f,
-                targetValue = 1f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(durationMillis = 600, delayMillis = delay),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "dot$delay"
-            )
-            Box(
-                Modifier
-                    .size(7.dp)
-                    .clip(CircleShape)
-                    .background(Accent.copy(alpha = alpha))
-            )
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            dots.forEach { delay ->
+                val alpha by transition.animateFloat(
+                    initialValue = 0.25f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(durationMillis = 600, delayMillis = delay),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "dot$delay"
+                )
+                Box(
+                    Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(Accent.copy(alpha = alpha))
+                )
+            }
         }
     }
 }
@@ -693,9 +818,9 @@ private fun ChatInput(state: AppState, isThinking: Boolean, onSend: (String, Lis
             }
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.Bottom) {
             // Attach button — toggles the source picker bubble (camera / gallery / document).
-            IconButton(onClick = { attachOpen = !attachOpen }) {
+            IconButton(onClick = { attachOpen = !attachOpen }, modifier = Modifier.padding(bottom = 4.dp)) {
                 Icon(
                     if (attachOpen) Icons.Filled.Close else Icons.Filled.AttachFile,
                     contentDescription = "Attach photo or file",
@@ -706,12 +831,12 @@ private fun ChatInput(state: AppState, isThinking: Boolean, onSend: (String, Lis
                 value = text,
                 onValueChange = { text = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Ask about budget, plan, docs…", color = InkTertiary) },
-                shape = RoundedCornerShape(22.dp),
+                placeholder = { Text("Message Pablo…", color = InkTertiary) },
+                shape = RoundedCornerShape(24.dp),
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AccentDeep,
-                    unfocusedBorderColor = Hairline,
+                    focusedBorderColor = Color.Transparent,
+                    unfocusedBorderColor = Color.Transparent,
                     focusedContainerColor = MaterialTheme.tvColors.glassSurface,
                     unfocusedContainerColor = MaterialTheme.tvColors.glassSurface,
                     cursorColor = AccentDeep,
@@ -729,7 +854,8 @@ private fun ChatInput(state: AppState, isThinking: Boolean, onSend: (String, Lis
                 label = "sendScale"
             )
             val sendBrush =
-                if (canSend) Brush.verticalGradient(listOf(AccentDeep, Accent)) else SolidColor(InkTertiary.copy(alpha = 0.5f))
+                if (canSend) Brush.verticalGradient(listOf(Color(0xFFD06837), Color(0xFF9C4520)))
+                else SolidColor(InkTertiary.copy(alpha = 0.5f))
             Surface(
                 onClick = {
                     if (canSend) {
@@ -743,6 +869,7 @@ private fun ChatInput(state: AppState, isThinking: Boolean, onSend: (String, Lis
                 shape = CircleShape,
                 color = Color.Transparent,
                 modifier = Modifier
+                    .padding(bottom = 2.dp)
                     .size(46.dp)
                     .background(sendBrush, CircleShape)
                     .graphicsLayer {
@@ -754,7 +881,7 @@ private fun ChatInput(state: AppState, isThinking: Boolean, onSend: (String, Lis
                     Icon(
                         Icons.AutoMirrored.Filled.Send,
                         contentDescription = "Send",
-                        tint = InkPrimary
+                        tint = Color(0xFFFDF3E7)
                     )
                 }
             }
@@ -784,9 +911,9 @@ private fun suggestionChips(state: AppState): List<String> = buildList {
 private fun AttachOption(label: String, icon: ImageVector, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.tvColors.glassSurface,
-        border = BorderStroke(0.5.dp, Accent.copy(alpha = 0.35f)),
+        border = BorderStroke(0.75.dp, MaterialTheme.tvColors.glassBorder),
         modifier = Modifier.pressScale()
     ) {
         Row(
@@ -801,21 +928,24 @@ private fun AttachOption(label: String, icon: ImageVector, onClick: () -> Unit) 
     }
 }
 
-/** Compact pill that just fills the composer when tapped. */
+/** Compact ghost chip that fills the composer when tapped. */
 @Composable
 private fun SuggestionChip(label: String, onClick: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(50),
-        color = AccentTint,
+        color = Color.Transparent,
+        border = BorderStroke(0.75.dp, MaterialTheme.tvColors.hairline),
         modifier = Modifier.pressScale()
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .clickable(onClick = onClick)
-                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .padding(horizontal = 13.dp, vertical = 7.dp)
         ) {
-            Text(label, style = MaterialTheme.typography.labelSmall, color = AccentDeep, maxLines = 1)
+            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = AccentDeep, modifier = Modifier.size(12.dp))
+            Spacer(Modifier.size(6.dp))
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.tvColors.textSecondary, maxLines = 1)
         }
     }
 }
