@@ -8,6 +8,8 @@ import com.odago.travollio.data.Day
 import com.odago.travollio.data.Document
 import com.odago.travollio.data.Item
 import com.odago.travollio.data.MAX_DOC_TEXT
+import com.odago.travollio.data.Packing
+import com.odago.travollio.data.PackingItem
 import com.odago.travollio.data.PriceWatch
 import com.odago.travollio.data.Transaction
 import com.odago.travollio.data.Trip
@@ -67,6 +69,8 @@ class GeminiAgent(
         - When you change a day's plan, also refresh that day's note via day_note so the Today/Trip screens stay accurate.
         - The user can attach receipts/tickets/files; they appear as [Attachments: …]. Use files_list to see stored files and link them to items via attachmentIds on itinerary_add / itinerary_update.
         - When the traveler says "I booked X at Y time", create it with itinerary_add — include timeLocal, place, address, confirmation, and cost when given.
+        - Packing: the app has a per-trip packing list the traveler ticks off. When they say "pack/we're going/what should I bring", call packing_generate first, then confirm in one line like "Added 24 items to your packing list." They can add specific things with packing_add, tick/untick with packing_toggle, ask "what's left/unpacked" via packing_list, and remove with packing_remove.
+        - When the traveler says they finished/did something from the plan (e.g. "we saw the temple", "done with breakfast", "checked in"), mark it done with item_check (match by title substring) and confirm in one line. "We didn't / didn't manage / uncheck" → item_uncheck. Ticking things keeps their streak going — after checking something off, it's natural to say what's next today.
         - After you act, the app automatically shows a "Go to" button on your reply — do NOT invent or describe that button; just keep the text short.
     """.trimIndent()
 
@@ -206,6 +210,29 @@ class GeminiAgent(
             JSONObject().put("type", "object").put("properties", JSONObject()
                 .put("id", JSONObject().put("type", "integer").put("description", "watch id from pricewatch_list"))
                 .put("observedAmount", JSONObject().put("type", "number")))))
+        put(toolDecl("packing_generate", "Fill the trip's packing list with smart suggestions (duration + planned activities aware). Skips items already on the list. No arguments.",
+            JSONObject().put("type", "object").put("properties", JSONObject()).put("required", JSONArray())))
+        put(toolDecl("packing_add", "Add one item to the packing list. category: clothes / toiletries / tech / documents / other.",
+            JSONObject().put("type", "object").put("properties", JSONObject()
+                .put("label", JSONObject().put("type", "string"))
+                .put("category", JSONObject().put("type", "string").put("enum", JSONArray().put("clothes").put("toiletries").put("tech").put("documents").put("other"))))))
+        put(toolDecl("packing_toggle", "Tick (pack) or untick a packing-list item by matching its label.",
+            JSONObject().put("type", "object").put("properties", JSONObject()
+                .put("label", JSONObject().put("type", "string").put("description", "label or part of it, e.g. 'passport'"))
+                .put("packed", JSONObject().put("type", "boolean").put("description", "true to mark packed; default toggles")))))
+        put(toolDecl("packing_remove", "Remove a packing-list item by matching its label.",
+            JSONObject().put("type", "object").put("properties", JSONObject()
+                .put("label", JSONObject().put("type", "string")))))
+        put(toolDecl("packing_list", "The trip's packing list: what's packed and what's left. No arguments.",
+            JSONObject().put("type", "object").put("properties", JSONObject()).put("required", JSONArray())))
+        put(toolDecl("item_check", "Mark an itinerary moment as done (the traveler checked it off). Match by itemId or title substring.",
+            JSONObject().put("type", "object").put("properties", JSONObject()
+                .put("itemId", JSONObject().put("type", "integer").put("description", "item id from itinerary_get"))
+                .put("title", JSONObject().put("type", "string").put("description", "title part to match when no itemId")))))
+        put(toolDecl("item_uncheck", "Undo a moment's done state (they didn't actually do it). Match by itemId or title substring.",
+            JSONObject().put("type", "object").put("properties", JSONObject()
+                .put("itemId", JSONObject().put("type", "integer"))
+                .put("title", JSONObject().put("type", "string")))))
         put(toolDecl("trip_list", "List every saved trip with its id, name, dates, city, whether it's archived, and which is active. Use before archiving/switching/importing.",
             JSONObject().put("type", "object").put("properties", JSONObject()).put("required", JSONArray())))
         put(toolDecl("trip_get", "Get one trip's full detail (by tripId, or the active trip if omitted): its metadata, spend, and each day with items.",
@@ -426,6 +453,13 @@ class GeminiAgent(
         "pricewatch_list" -> priceWatchList()
         "pricewatch_remove" -> priceWatchRemove(args)
         "pricewatch_check" -> priceWatchCheck(args)
+        "packing_generate" -> packingGenerate()
+        "packing_add" -> packingAdd(args)
+        "packing_toggle" -> packingToggle(args)
+        "packing_remove" -> packingRemove(args)
+        "packing_list" -> packingList()
+        "item_check" -> itemDone(args, true)
+        "item_uncheck" -> itemDone(args, false)
         else -> JSONObject().put("error", "unknown tool $name")
     }
 
@@ -969,6 +1003,97 @@ class GeminiAgent(
                 else "'${w.label}' at $obs ${w.targetCcy} — still above target ${w.targetAmount}.")
     }
 
+    // ---------- packing + check-offs (engagement layer) ----------
+
+    private suspend fun packingGenerate(): JSONObject {
+        val trip = db.activeTrip() ?: return JSONObject().put("error", "no active trip")
+        val existing = db.packingDao().forTripOnce(trip.id).map { it.label.lowercase() }.toSet()
+        val fresh = Packing.suggest(trip, db.itemDao().itemsForTripOnce(trip.id))
+            .filter { it.first.lowercase() !in existing }
+        fresh.forEach { (label, cat) ->
+            db.packingDao().insert(
+                PackingItem(tripId = trip.id, label = label, category = cat, aiSuggested = true, createdAt = java.time.Instant.now().toString())
+            )
+        }
+        lastActionJson = JSONObject().put("type", "trip").toString()
+        val total = db.packingDao().forTripOnce(trip.id).size
+        return JSONObject().put("ok", true)
+            .put("message", if (fresh.isEmpty()) "Your packing list is already complete — ${total}x items on it."
+                else "Added ${fresh.size}x to bring — ${total}x on the list now.")
+    }
+
+    private suspend fun packingAdd(args: JSONObject): JSONObject {
+        val trip = db.activeTrip() ?: return JSONObject().put("error", "no active trip")
+        val label = args.optString("label", "").trim()
+        if (label.isBlank()) return JSONObject().put("error", "missing label")
+        if (db.packingDao().countByLabel(trip.id, label) > 0) return JSONObject().put("ok", true).put("message", "'$label' is already on the packing list.")
+        db.packingDao().insert(
+            PackingItem(
+                tripId = trip.id,
+                label = label.take(60),
+                category = args.optString("category", "other").trim().ifBlank { "other" },
+                createdAt = java.time.Instant.now().toString()
+            )
+        )
+        lastActionJson = JSONObject().put("type", "trip").toString()
+        return JSONObject().put("ok", true).put("message", "Added '$label' to the packing list.")
+    }
+
+    private suspend fun packingToggle(args: JSONObject): JSONObject {
+        val trip = db.activeTrip() ?: return JSONObject().put("error", "no active trip")
+        val q = args.optString("label", "").trim().lowercase()
+        if (q.isBlank()) return JSONObject().put("error", "missing label")
+        val match = db.packingDao().forTripOnce(trip.id).firstOrNull { it.label.lowercase().contains(q) }
+            ?: return JSONObject().put("error", "no packing item matches '$q' — list with packing_list")
+        val target = if (args.has("packed")) args.optBoolean("packed") else !match.isPacked
+        db.packingDao().setPacked(match.id, target)
+        lastActionJson = JSONObject().put("type", "trip").toString()
+        val left = db.packingDao().forTripOnce(trip.id).count { !it.isPacked }
+        return JSONObject().put("ok", true)
+            .put("message", if (target) "Packed: '${match.label}'. ${left}x left in the bag."
+                else "Unpacked '${match.label}'.")
+    }
+
+    private suspend fun packingRemove(args: JSONObject): JSONObject {
+        val trip = db.activeTrip() ?: return JSONObject().put("error", "no active trip")
+        val q = args.optString("label", "").trim().lowercase()
+        if (q.isBlank()) return JSONObject().put("error", "missing label")
+        val match = db.packingDao().forTripOnce(trip.id).firstOrNull { it.label.lowercase().contains(q) }
+            ?: return JSONObject().put("error", "no packing item matches '$q'")
+        db.packingDao().delete(match)
+        lastActionJson = JSONObject().put("type", "trip").toString()
+        return JSONObject().put("ok", true).put("message", "Removed '${match.label}' from the packing list.")
+    }
+
+    private suspend fun packingList(): JSONObject {
+        val trip = db.activeTrip() ?: return JSONObject().put("error", "no active trip")
+        val all = db.packingDao().forTripOnce(trip.id)
+        if (all.isEmpty()) return JSONObject().put("message", "The packing list is empty — say 'generate' and I'll fill it.")
+        val packed = all.count { it.isPacked }
+        val left = all.filter { !it.isPacked }.joinToString(", ") { it.label }
+        return JSONObject().put("message", "$packed/${all.size} packed. Still to pack: $left")
+    }
+
+    /** Mark/unmark an itinerary moment as done (kept for the streak + explorer XP). */
+    private suspend fun itemDone(args: JSONObject, done: Boolean): JSONObject {
+        val trip = db.activeTrip() ?: return JSONObject().put("error", "no active trip")
+        val items = db.itemDao().itemsForTripOnce(trip.id)
+        val match = when {
+            args.has("itemId") -> items.firstOrNull { it.id == args.optLong("itemId", -1L) }
+            else -> {
+                val q = args.optString("title", "").trim().lowercase()
+                if (q.isBlank()) return JSONObject().put("error", "give itemId or title to match")
+                items.filter { it.doneAt != null == done }.firstOrNull { it.title.lowercase().contains(q) }
+                    ?: items.firstOrNull { it.title.lowercase().contains(q) }
+            }
+        } ?: return JSONObject().put("error", "no itinerary moment matches — check itinerary_get")
+        db.itemDao().setDone(match.id, if (done) java.time.Instant.now().toString() else null)
+        lastActionJson = JSONObject().put("type", "trip").toString()
+        return JSONObject().put("ok", true)
+            .put("message", if (done) "Done: '${match.title}'. Nice one."
+                else "Unchecked '${match.title}'.")
+    }
+
     // ---------- multi-trip + bulk import ----------
 
     private suspend fun tripList(args: JSONObject): JSONObject {
@@ -996,7 +1121,8 @@ class GeminiAgent(
             val ia = JSONArray()
             (byDay[d.id] ?: emptyList()).forEach { it ->
                 ia.put(JSONObject().put("id", it.id).put("title", it.title).put("time", it.timeLocal ?: "")
-                    .put("kind", it.kind).put("place", it.place ?: JSONObject.NULL).put("costLocal", it.costLocal ?: JSONObject.NULL))
+                    .put("kind", it.kind).put("place", it.place ?: JSONObject.NULL).put("costLocal", it.costLocal ?: JSONObject.NULL)
+                    .put("done", it.doneAt != null))
             }
             dayArr.put(JSONObject().put("day", idx + 1).put("date", d.date).put("city", d.city).put("items", ia))
         }

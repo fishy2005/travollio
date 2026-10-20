@@ -11,9 +11,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     entities = [
         Trip::class, Day::class, Item::class, Transaction::class, Document::class,
         PoiSaved::class, ChatMessage::class, RoutineState::class, RoutineLog::class,
-        Attachment::class, DailyNote::class, PriceWatch::class
+        Attachment::class, DailyNote::class, PriceWatch::class, PackingItem::class
     ],
-    version = 8
+    version = 9
 )
 abstract class AppDatabase : RoomDatabase() {
 
@@ -27,6 +27,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun attachmentDao(): AttachmentDao
     abstract fun dailyNoteDao(): DailyNoteDao
     abstract fun priceWatchDao(): PriceWatchDao
+    abstract fun packingDao(): PackingDao
 
     /** Resolve the currently-active (non-archived, selected) trip, or null. */
     suspend fun activeTrip(): Trip? {
@@ -86,6 +87,22 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v8 → v9: engagement layer — moment check-offs + per-trip packing lists. */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN doneAt TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS packing_items (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "tripId INTEGER NOT NULL, label TEXT NOT NULL, category TEXT NOT NULL, " +
+                        "isPacked INTEGER NOT NULL DEFAULT 0, aiSuggested INTEGER NOT NULL DEFAULT 0, " +
+                        "createdAt TEXT NOT NULL, " +
+                        "FOREIGN KEY(tripId) REFERENCES trips(id) ON DELETE CASCADE)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_packing_items_tripId ON packing_items(tripId)")
+            }
+        }
+
         fun get(context: Context): AppDatabase {
             val ctx = context.applicationContext
             return INSTANCE ?: synchronized(this) {
@@ -96,7 +113,7 @@ abstract class AppDatabase : RoomDatabase() {
                         // dossier (item place/address/link/confirmation + attachments table).
                         // Proper migrations are the only path — a destructive fallback would
                         // silently wipe the traveller's trips on the next schema bump.
-                        .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                        .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                         .addCallback(object : Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)

@@ -1,7 +1,9 @@
 package com.odago.travollio.ui.screens
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,10 +72,12 @@ private val EXPENSE_CATEGORIES = listOf("food", "transit", "lodging", "shopping"
 
 /** Money: spring-animated budget ring + pace readout + transaction feed, plus a manual
  *  "add expense" entry so you don't have to go through chat for a quick purchase. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MoneyScreen(
     state: AppState,
-    onAddExpense: (Double, String?, String, String) -> Unit = { _, _, _, _ -> }
+    onAddExpense: (Double, String?, String, String) -> Unit = { _, _, _, _ -> },
+    onDeleteExpense: (Long) -> Unit = {}
 ) {
     val trip = state.trip
     var showAdd by remember { mutableStateOf(false) }
@@ -192,7 +196,7 @@ fun MoneyScreen(
                     color = AccentDeep
                 )
                 Text(
-                    "${state.transactions.size} logged",
+                    "${state.transactions.size} logged · long-press to delete",
                     style = MaterialTheme.typography.labelSmall,
                     color = InkTertiary
                 )
@@ -213,7 +217,12 @@ fun MoneyScreen(
             items(state.transactions.size, key = { state.transactions[it].id }) { i ->
                 val tx = state.transactions[i]
                 GlassCard(
-                    modifier = Modifier.animateItem(),
+                    modifier = Modifier
+                        .animateItem()
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = { onDeleteExpense(tx.id) }
+                        ),
                     cornerRadius = 18.dp,
                     contentPadding = 14.dp
                 ) {

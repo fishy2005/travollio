@@ -1,6 +1,8 @@
 package com.odago.travollio.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -26,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.odago.travollio.data.AppState
 import com.odago.travollio.data.Item
@@ -33,6 +37,7 @@ import com.odago.travollio.ui.Accent
 import com.odago.travollio.ui.AccentDeep
 import com.odago.travollio.ui.Blush
 import com.odago.travollio.ui.BlushTint
+import com.odago.travollio.ui.Engagement
 import com.odago.travollio.ui.Hairline
 import com.odago.travollio.ui.InkPrimary
 import com.odago.travollio.ui.InkSecondary
@@ -52,7 +57,13 @@ import java.time.temporal.ChronoUnit
 /** Today: Fable Mono hero (Cinzel overline + Playfair city title) + compact budget card
  *  and the day's plan as Meta-style cards with monochrome KindTile icons. */
 @Composable
-fun TodayScreen(state: AppState, onItemClick: (Item) -> Unit, onOpenTrips: () -> Unit) {
+fun TodayScreen(
+    state: AppState,
+    onItemClick: (Item) -> Unit,
+    onOpenTrips: () -> Unit,
+    onToggleDone: (Long) -> Unit = {},
+    onQuickAction: (String) -> Unit = {}
+) {
     val today = LocalDate.now().toString()
     // Show today's day; else the nearest upcoming day; else (trip finished) the last day.
     val day = state.days.firstOrNull { it.date == today }
@@ -123,6 +134,14 @@ fun TodayScreen(state: AppState, onItemClick: (Item) -> Unit, onOpenTrips: () ->
             }
         }
 
+        if (trip != null && (items.isNotEmpty() || day != null)) {
+            item(key = "briefing") { BriefingCard(state, day?.id) }
+        }
+
+        if (trip != null) {
+            item(key = "quickActions") { QuickActions(onQuickAction) }
+        }
+
         if (dayNote != null) {
             item(key = "summary") { AiSummaryCard(dayNote.content) }
         }
@@ -155,7 +174,7 @@ fun TodayScreen(state: AppState, onItemClick: (Item) -> Unit, onOpenTrips: () ->
                     contentPadding = 14.dp,
                     onClick = { onItemClick(item) }
                 ) {
-                    ItineraryRow(item)
+                    ItineraryRow(item, onToggleDone)
                 }
             }
         }
@@ -247,13 +266,39 @@ private fun PaceChip(label: String, hot: Boolean) {
     }
 }
 
-/** One Meta-style itinerary row: KindTile glyph + title/detail, gold time & cost on the right. */
+/** One Meta-style itinerary row: check-off circle + KindTile glyph + title/detail, gold time & cost. */
 @Composable
-private fun ItineraryRow(item: Item) {
+private fun ItineraryRow(item: Item, onToggleDone: (Long) -> Unit = {}) {
+    val done = item.doneAt != null
     Row(verticalAlignment = Alignment.CenterVertically) {
+        // Check-off circle — the engagement loop: tap when you've done the thing.
+        Box(
+            modifier = Modifier
+                .padding(end = 10.dp)
+                .size(26.dp)
+                .clip(RoundedCornerShape(99))
+                .background(if (done) Accent else androidx.compose.ui.graphics.Color.Transparent)
+                .then(
+                    if (done) Modifier else Modifier.border(1.5.dp, Hairline, RoundedCornerShape(99))
+                )
+                .clickable { onToggleDone(item.id) },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Filled.Check,
+                contentDescription = if (done) "Done" else "Mark done",
+                tint = if (done) androidx.compose.ui.graphics.Color.White else androidx.compose.ui.graphics.Color.Transparent,
+                modifier = Modifier.size(16.dp)
+            )
+        }
         KindTile(kind = item.kind, size = 44.dp, modifier = Modifier.padding(end = 12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(item.title, style = MaterialTheme.typography.bodyLarge, color = InkPrimary)
+            Text(
+                item.title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (done) InkTertiary else InkPrimary,
+                textDecoration = if (done) TextDecoration.LineThrough else null
+            )
             item.place?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = InkSecondary)
             }
@@ -282,5 +327,85 @@ private fun ItineraryRow(item: Item) {
                 )
             }
         }
+    }
+}
+
+/** Day briefing: progress + streak in one glance, so the traveler keeps ticking. */
+@Composable
+private fun BriefingCard(state: AppState, dayId: Long?) {
+    val dayItems = state.items.filter { it.dayId == dayId }
+    val doneCount = dayItems.count { it.doneAt != null }
+    val packed = state.packing.count { it.isPacked }
+    val packingTotal = state.packing.size
+    val streak = Engagement.streak(state)
+
+    GlassCard(cornerRadius = 22.dp, contentPadding = 16.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("DAILY BRIEFING", style = MaterialTheme.typography.labelSmall, color = AccentDeep)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                BriefStat(
+                    label = "Moments",
+                    value = if (dayItems.isEmpty()) "—"
+                    else "$doneCount / ${dayItems.size} done",
+                    hot = dayItems.isNotEmpty() && doneCount == dayItems.size
+                )
+                BriefStat(
+                    label = "Packed",
+                    value = if (packingTotal == 0) "—"
+                    else "$packed / $packingTotal",
+                    hot = packingTotal > 0 && packed == packingTotal
+                )
+                BriefStat(
+                    label = "Streak",
+                    value = if (streak > 0) "$streak day${if (streak == 1) "" else "s"}" else "start one",
+                    hot = streak >= 3
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BriefStat(label: String, value: String, hot: Boolean) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, style = MaterialTheme.typography.titleMedium, color = if (hot) Accent else InkPrimary)
+        Text(
+            label.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = InkTertiary
+        )
+    }
+}
+
+/** Quick-action chips — the everyday loops: spend, plan, check, weather. */
+@Composable
+private fun QuickActions(onQuickAction: (String) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        QuickActionChip("Log spend", "money", Modifier.weight(1f), onQuickAction)
+        QuickActionChip("Plan today", "plan", Modifier.weight(1f), onQuickAction)
+        QuickActionChip("Weather", "weather", Modifier.weight(1f), onQuickAction)
+    }
+}
+
+@Composable
+private fun QuickActionChip(label: String, action: String, modifier: Modifier = Modifier, onQuickAction: (String) -> Unit) {
+    Surface(
+        modifier = modifier.clickable { onQuickAction(action) },
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, Hairline)
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = AccentDeep,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
+        )
     }
 }

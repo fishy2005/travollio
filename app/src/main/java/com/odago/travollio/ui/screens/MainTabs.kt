@@ -54,20 +54,23 @@ enum class Tab(val label: String, val icon: ImageVector) {
 fun MainTabs(
     viewModel: TripViewModel,
     darkTheme: Boolean,
-    onDarkThemeChange: (Boolean) -> Unit
+    onDarkThemeChange: (Boolean) -> Unit,
+    initialTab: Int = 0
 ) {
     // The UI OBSERVES the state flow so the agent's writes recompose live.
     val state by viewModel.state.collectAsState()
     val isThinking by viewModel.isThinking.collectAsState()
     val lastOutcome by viewModel.lastOutcome.collectAsState()
     val streamingText by viewModel.streamingText.collectAsState()
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    var tab by rememberSaveable { mutableIntStateOf(initialTab.coerceIn(0, Tab.entries.size - 1)) }
     // Which itinerary moment's dossier is open (null = none)
     var detailItem by remember { mutableStateOf<Item?>(null) }
     // Trip-tab day pill selection (lifted so the assistant's "Open Day N" can focus it)
     var tripSelectedDay by rememberSaveable { mutableIntStateOf(0) }
     // Trips hub (switch/create/edit/archive)
     var showTrips by remember { mutableStateOf(false) }
+    // Packing list sheet (Trip tab)
+    var showPacking by remember { mutableStateOf(false) }
 
     // Deep-link from an assistant "Go to" button → the relevant tab/item/day.
     fun handleGoto(actionJson: String) {
@@ -108,14 +111,28 @@ fun MainTabs(
                 label = "tab"
             ) { i ->
                 when (i) {
-                    0 -> TodayScreen(state = state, onItemClick = { detailItem = it }, onOpenTrips = { showTrips = true })
+                    0 -> TodayScreen(
+                        state = state,
+                        onItemClick = { detailItem = it },
+                        onOpenTrips = { showTrips = true },
+                        onToggleDone = viewModel::toggleItemDone,
+                        onQuickAction = { action ->
+                            when (action) {
+                                "money" -> tab = 2
+                                "weather" -> { tab = 3; viewModel.send("What's the weather like for the next days of my trip? Use weather_get.") }
+                                "plan" -> { tab = 3; viewModel.send("Fill in a good plan for today in our current day. Use itinerary_get and today_plan first, then add 2-4 sensible gaps with itinerary_add.") }
+                            }
+                        }
+                    )
                     1 -> TripScreen(
                         state = state,
                         selectedDay = tripSelectedDay,
                         onSelectDay = { tripSelectedDay = it },
-                        onItemClick = { detailItem = it }
+                        onItemClick = { detailItem = it },
+                        onToggleDone = viewModel::toggleItemDone,
+                        onOpenPacking = { showPacking = true }
                     )
-                    2 -> MoneyScreen(state = state, onAddExpense = viewModel::addExpense)
+                    2 -> MoneyScreen(state = state, onAddExpense = viewModel::addExpense, onDeleteExpense = viewModel::deleteTransaction)
                     3 -> AssistantScreen(
                         state = state,
                         isThinking = isThinking,
@@ -127,20 +144,25 @@ fun MainTabs(
                     )
                     else -> SettingsScreen(
                         darkTheme = darkTheme,
-                        onDarkThemeChange = onDarkThemeChange
+                        onDarkThemeChange = onDarkThemeChange,
+                        state = state
                     )
                 }
             }
 
             // Moment dossier — opened by tapping any itinerary card.
-            detailItem?.let { item ->
-                ItemDetailSheet(
-                    item = item,
-                    state = state,
-                    onDismiss = { detailItem = null },
-                    onAttach = { target, uris -> viewModel.attachToItem(target.id, uris) },
-                    onDelete = { target -> viewModel.deleteItem(target.id); detailItem = null }
-                )
+            // Re-derive from state so check-offs/attaches made in the sheet reflect live.
+            detailItem?.let { held ->
+                state.items.firstOrNull { it.id == held.id }?.let { item ->
+                    ItemDetailSheet(
+                        item = item,
+                        state = state,
+                        onDismiss = { detailItem = null },
+                        onAttach = { target, uris -> viewModel.attachToItem(target.id, uris) },
+                        onDelete = { target -> viewModel.deleteItem(target.id); detailItem = null },
+                        onToggleDone = { target -> viewModel.toggleItemDone(target.id) }
+                    )
+                }
             }
 
             // Trips hub — switch/create/edit/archive/delete trips.
@@ -154,6 +176,23 @@ fun MainTabs(
                     onCreate = { viewModel.createTrip(it) },
                     onUpdate = { viewModel.updateTrip(it) },
                     onDelete = { viewModel.deleteTrip(it) }
+                )
+            }
+
+            // Packing list sheet — per-trip checklist with progress + AI suggestions.
+            if (showPacking) {
+                PackingSheet(
+                    state = state,
+                    onDismiss = { showPacking = false },
+                    onAdd = viewModel::addPacking,
+                    onToggle = viewModel::togglePacked,
+                    onRemove = viewModel::removePacking,
+                    onGenerate = viewModel::generatePacking,
+                    onAskPablo = {
+                        showPacking = false
+                        tab = 3
+                        viewModel.send("Generate me a packing list for the trip. Use packing_generate after checking itinerary_get.")
+                    }
                 )
             }
         }

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_bg"
+    android:padding="14dp">
+
+    <TextView
+        android:id="@+id/widget_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Trip"
+        android:textColor="#F3EEE4"
+        android:textSize="18sp"
+        android:fontFamily="sans-serif-medium"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <TextView
+        android:id="@+id/widget_subtitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="TODAY"
+        android:textColor="#E08A52"
+        android:textSize="11sp"
+        android:fontFamily="sans-serif-medium"
+        android:letterSpacing="0.08"
+        android:layout_marginTop="2dp"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <TextView
+        android:id="@+id/widget_next"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Nothing planned"
+        android:textColor="#F3EEE4"
+        android:textSize="14sp"
+        android:fontFamily="sans-serif"
+        android:layout_marginTop="10dp"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <TextView
+        android:id="@+id/widget_budget"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textColor="#C4B8A6"
+        android:textSize="12sp"
+        android:fontFamily="sans-serif"
+        android:layout_marginTop="3dp"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal"
+        android:gravity="center|start"
+        android:layout_marginTop="6dp">
+
+        <TextView
+            android:id="@+id/widget_ask"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Ask Pablo"
+            android:textColor="#2E1A0C"
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-medium"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingTop="7dp"
+            android:paddingBottom="7dp"
+            android:background="@drawable/widget_btn" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Travollio"
+            android:textColor="#8D867A"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif"
+            android:paddingStart="12dp"
+            android:letterSpacing="0.06" />
+    </LinearLayout>
+</LinearLayout>

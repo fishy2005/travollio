@@ -25,6 +25,19 @@
             </intent-filter>
         </activity>
 
+        <!-- Home-screen live widget: countdown + next moment + budget + Ask Pablo. -->
+        <receiver
+            android:name=".widget.TripWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.appwidget.action.APPWIDGET_ENABLED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/trip_widget_info" />
+        </receiver>
+
         <!-- Share attachments safely: app-private paths, scoped grants, never world-readable. -->
         <provider
             android:name="androidx.core.content.FileProvider"

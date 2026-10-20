@@ -45,9 +45,11 @@ class MainActivity : ComponentActivity() {
                 ctl.isAppearanceLightNavigationBars = !darkTheme
             }
             TravollioTheme(darkTheme = darkTheme) {
+                val startTab = intent?.getIntExtra(com.odago.travollio.widget.TripWidgetProvider.EXTRA_TAB, 0) ?: 0
                 MainTabs(
                     viewModel = viewModel,
                     darkTheme = darkTheme,
+                    initialTab = startTab,
                     onDarkThemeChange = { dark ->
                         darkTheme = dark
                         SettingsPrefs.setDarkTheme(this@MainActivity, dark)

@@ -18,7 +18,8 @@ data class AppState(
     val chat: List<ChatMessage> = emptyList(),
     val attachments: List<Attachment> = emptyList(),
     val notes: List<DailyNote> = emptyList(),
-    val availableTrips: List<Trip> = emptyList()
+    val availableTrips: List<Trip> = emptyList(),
+    val packing: List<PackingItem> = emptyList()
 ) {
     companion object {
         fun empty() = AppState()

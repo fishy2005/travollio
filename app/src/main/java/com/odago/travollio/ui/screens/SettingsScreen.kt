@@ -1,5 +1,6 @@
 package com.odago.travollio.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,6 +45,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -55,8 +57,11 @@ import com.odago.travollio.data.AgentProvider
 import com.odago.travollio.data.SettingsPrefs
 import com.odago.travollio.ui.Accent
 import com.odago.travollio.ui.AccentDeep
+import com.odago.travollio.ui.Engagement
+import com.odago.travollio.ui.Hairline
 import com.odago.travollio.ui.InkPrimary
 import com.odago.travollio.ui.InkSecondary
+import com.odago.travollio.ui.InkTertiary
 import com.odago.travollio.ui.Sage
 import com.odago.travollio.ui.tvColors
 import com.odago.travollio.update.Updater
@@ -71,7 +76,11 @@ private enum class Phase { IDLE, CHECKING, UP_TO_DATE, AVAILABLE, DOWNLOADING, D
 
 /** Settings: appearance, build info and the in-app updater ("scan for updates & install"). */
 @Composable
-fun SettingsScreen(darkTheme: Boolean, onDarkThemeChange: (Boolean) -> Unit) {
+fun SettingsScreen(
+    darkTheme: Boolean,
+    onDarkThemeChange: (Boolean) -> Unit,
+    state: com.odago.travollio.data.AppState = com.odago.travollio.data.AppState.empty()
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -149,6 +158,9 @@ fun SettingsScreen(darkTheme: Boolean, onDarkThemeChange: (Boolean) -> Unit) {
                 color = InkSecondary
             )
         }
+
+        item { SectionHeader("Explorer") }
+        item { ExplorerCard(state) }
 
         item { SectionHeader("Updates") }
 
@@ -546,6 +558,62 @@ private fun LiveDataCard() {
                 }) { Text("Save", color = AccentDeep) }
             }
             if (saved) Text("Saved ✓", style = MaterialTheme.typography.bodySmall, color = Sage)
+        }
+    }
+}
+
+/** Explorer progress card: XP, level bar, streak — the lifetime "how far along are you" readout. */
+@Composable
+private fun ExplorerCard(state: com.odago.travollio.data.AppState) {
+    val xp = Engagement.xp(state)
+    val level = Engagement.level(xp)
+    val nextAt = Engagement.xpForNextLevel(level)
+    val prevAt = if (level > 1) Engagement.xpForNextLevel(level - 1) else 0
+    val ratio = (((xp - prevAt).coerceAtLeast(0)).toFloat() / (nextAt - prevAt).coerceAtLeast(1)).coerceIn(0f, 1f)
+    val streak = Engagement.streak(state)
+
+    GlassCard(cornerRadius = 22.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("EXPLORER", style = MaterialTheme.typography.labelSmall, color = AccentDeep)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Level $level",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = InkPrimary,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    "$xp XP",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = AccentDeep
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(7.dp)
+                    .clip(RoundedCornerShape(99))
+                    .background(MaterialTheme.tvColors.hairline)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(ratio)
+                        .height(7.dp)
+                        .clip(RoundedCornerShape(99))
+                        .background(Accent)
+                )
+            }
+            Text(
+                "${(nextAt - xp).coerceAtLeast(0)} XP to level ${level + 1}" +
+                    if (streak > 0) " · ${streak}d streak" else " · no streak yet — tick something off today",
+                style = MaterialTheme.typography.labelSmall,
+                color = InkSecondary
+            )
+            Text(
+                "XP: tick a moment +15 · log a spend +3 · save a photo +10 · complete a trip +60",
+                style = MaterialTheme.typography.bodySmall,
+                color = InkTertiary
+            )
         }
     }
 }

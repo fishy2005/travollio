@@ -169,5 +169,15 @@ class TravollioApp : Application() {
             ExistingPeriodicWorkPolicy.KEEP,
             prices
         )
+
+        // Home-screen widget refresh (countdown changes at midnight; item/budget on writes too).
+        val widget = PeriodicWorkRequestBuilder<com.odago.travollio.widget.WidgetWorker>(3, TimeUnit.HOURS)
+            .setConstraints(constraints)
+            .build()
+        wm.enqueueUniquePeriodicWork(
+            "widget-refresh-periodic",
+            ExistingPeriodicWorkPolicy.KEEP,
+            widget
+        )
     }
 }

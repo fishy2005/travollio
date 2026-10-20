@@ -23,6 +23,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ConfirmationNumber
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
@@ -82,7 +84,8 @@ fun ItemDetailSheet(
     state: AppState,
     onDismiss: () -> Unit,
     onAttach: (Item, List<Uri>) -> Unit,
-    onDelete: (Item) -> Unit
+    onDelete: (Item) -> Unit,
+    onToggleDone: (Item) -> Unit = {}
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val attachments = state.attachments.filter { it.itemId == item.id }
@@ -125,6 +128,32 @@ fun ItemDetailSheet(
             }
             Spacer(Modifier.height(6.dp))
             Text(item.title, style = MaterialTheme.typography.headlineLarge, color = InkPrimary)
+
+            // Check-off: keeps the engagement loop going from the dossier too.
+            Spacer(Modifier.height(10.dp))
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = if (item.doneAt != null) Accent else AccentTint,
+                modifier = Modifier.clickable { onToggleDone(item) }
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Icon(
+                        if (item.doneAt != null) Icons.Filled.Check else Icons.Filled.CheckCircle,
+                        contentDescription = null,
+                        tint = if (item.doneAt != null) androidx.compose.ui.graphics.Color.White else Accent,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        if (item.doneAt != null) "Done — tap to undo" else "Mark as done",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (item.doneAt != null) androidx.compose.ui.graphics.Color.White else AccentDeep
+                    )
+                }
+            }
 
             item.place?.let {
                 Spacer(Modifier.height(10.dp))

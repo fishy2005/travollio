@@ -84,12 +84,21 @@ interface ItemDao {
     @Query("UPDATE items SET dayId = :dayId, sort = :sort WHERE id = :id")
     suspend fun moveItem(id: Long, dayId: Long, sort: Int)
 
-    /** Re-sort a whole day in place so the UI order stays stable after add/move. */
     @Query("SELECT COALESCE(MAX(sort), -1) FROM items WHERE dayId = :dayId")
     suspend fun maxSortForDay(dayId: Long): Int
 
     @Delete
     suspend fun delete(item: Item)
+
+    /** Toggle check-off state for a moment (progress / streaks / XP). */
+    @Query("UPDATE items SET doneAt = :ts WHERE id = :id")
+    suspend fun setDone(id: Long, ts: String?)
+
+    @Query("SELECT doneAt FROM items WHERE doneAt IS NOT NULL ORDER BY doneAt")
+    suspend fun allDoneTimestamps(): List<String>
+
+    @Query("SELECT COUNT(*) FROM items WHERE doneAt IS NOT NULL")
+    suspend fun doneCount(): Int
 }
 
 @Dao
@@ -242,4 +251,31 @@ interface PriceWatchDao {
 
     @Query("DELETE FROM price_watches WHERE tripId = :tripId")
     suspend fun deleteAll(tripId: Long)
+}
+
+@Dao
+interface PackingDao {
+    @Query("SELECT * FROM packing_items WHERE tripId = :tripId ORDER BY isPacked, id")
+    fun forTrip(tripId: Long): Flow<List<PackingItem>>
+
+    @Query("SELECT * FROM packing_items WHERE tripId = :tripId ORDER BY isPacked, id")
+    suspend fun forTripOnce(tripId: Long): List<PackingItem>
+
+    @Query("SELECT * FROM packing_items WHERE id = :id LIMIT 1")
+    suspend fun once(id: Long): PackingItem?
+
+    @Insert
+    suspend fun insert(p: PackingItem): Long
+
+    @Query("UPDATE packing_items SET isPacked = :packed WHERE id = :id")
+    suspend fun setPacked(id: Long, packed: Boolean)
+
+    @Delete
+    suspend fun delete(p: PackingItem)
+
+    @Query("DELETE FROM packing_items WHERE tripId = :tripId")
+    suspend fun deleteAll(tripId: Long)
+
+    @Query("SELECT COUNT(*) FROM packing_items WHERE tripId = :tripId AND label = :label")
+    suspend fun countByLabel(tripId: Long, label: String): Int
 }

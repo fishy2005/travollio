@@ -14,6 +14,8 @@ import com.odago.travollio.data.AttachmentMeta
 import com.odago.travollio.data.ChatMessage
 import com.odago.travollio.data.Fx
 import com.odago.travollio.data.MAX_DOC_TEXT
+import com.odago.travollio.data.Packing
+import com.odago.travollio.data.PackingItem
 import com.odago.travollio.data.SettingsPrefs
 import com.odago.travollio.data.Transaction
 import com.odago.travollio.data.Trip
@@ -71,6 +73,9 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
             }
                 .combine(db.dailyNoteDao().forTrip(trip.id)) { s, notes ->
                     s.copy(notes = notes)
+                }
+                .combine(db.packingDao().forTrip(trip.id)) { s, packing ->
+                    s.copy(packing = packing)
                 }
         }
         // Chat is NOT trip-scoped: it must render even when no trip exists, otherwise every
@@ -193,6 +198,7 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
             if (t.isArchived) db.tripDao().update(t.copy(isArchived = false))
             db.setActiveTrip(tripId)
         }
+        refreshWidget()
     }
 
     fun archiveTrip(tripId: Long) = viewModelScope.launch {
@@ -208,6 +214,7 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
         withContext(Dispatchers.IO) {
             if (trip.id > 0) db.tripDao().update(trip)
         }
+        refreshWidget()
     }
 
     fun createTrip(trip: Trip) = viewModelScope.launch {
@@ -215,6 +222,7 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
             val id = db.tripDao().insert(trip.copy(isArchived = false))
             db.setActiveTrip(id)
         }
+        refreshWidget()
     }
 
     /** Manually remove an itinerary moment (the agent can do this via `itinerary_remove`). */
@@ -255,6 +263,7 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 )
             }
+            refreshWidget()
         }
     }
 
@@ -297,6 +306,75 @@ class TripViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { File(a.filePath).delete() }
             runCatching { db.attachmentDao().delete(a) }
         }
+    }
+
+    // ---- Engagement: check-offs + packing ----
+
+    /** Toggle a moment's check-off (progress feel, streaks, Explorer XP). */
+    fun toggleItemDone(itemId: Long) = viewModelScope.launch {
+        withContext(Dispatchers.IO) {
+            val item = db.itemDao().itemOnce(itemId) ?: return@withContext
+            val next = if (item.doneAt == null) Instant.now().toString() else null
+            db.itemDao().setDone(itemId, next)
+        }
+        refreshWidget()
+    }
+
+    fun addPacking(label: String, category: String) {
+        val trimmed = label.trim().take(60)
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val trip = db.activeTrip() ?: return@withContext
+                if (db.packingDao().countByLabel(trip.id, trimmed) > 0) return@withContext
+                db.packingDao().insert(
+                    PackingItem(
+                        tripId = trip.id,
+                        label = trimmed,
+                        category = category.ifBlank { "other" },
+                        createdAt = Instant.now().toString()
+                    )
+                )
+            }
+        }
+    }
+
+    fun togglePacked(id: Long) = viewModelScope.launch {
+        withContext(Dispatchers.IO) {
+            val p = db.packingDao().once(id) ?: return@withContext
+            db.packingDao().setPacked(id, !p.isPacked)
+        }
+    }
+
+    fun removePacking(id: Long) = viewModelScope.launch {
+        withContext(Dispatchers.IO) {
+            db.packingDao().once(id)?.let { db.packingDao().delete(it) }
+        }
+    }
+
+    /** Fill the list with rule-based suggestions (skips labels already present). */
+    fun generatePacking() = viewModelScope.launch {
+        withContext(Dispatchers.IO) {
+            val trip = db.activeTrip() ?: return@withContext
+            val existing = db.packingDao().forTripOnce(trip.id).map { it.label.lowercase() }.toSet()
+            val fresh = Packing.suggest(trip, db.itemDao().itemsForTripOnce(trip.id))
+                .filter { it.first.lowercase() !in existing }
+            fresh.forEach { (label, cat) ->
+                db.packingDao().insert(
+                    PackingItem(
+                        tripId = trip.id,
+                        label = label,
+                        category = cat,
+                        aiSuggested = true,
+                        createdAt = Instant.now().toString()
+                    )
+                )
+            }
+        }
+    }
+
+    private fun refreshWidget() {
+        com.odago.travollio.widget.TripWidgetProvider.refresh(getApplication<Application>())
     }
 
     /** Grounded local-engine answer used whenever the cloud agent is unavailable. */
